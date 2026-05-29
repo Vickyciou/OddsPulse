@@ -1,0 +1,20 @@
+# Xcode
+xcuserdata/
+*.xcuserstate
+build/
+DerivedData/
+*.hmap
+
+# App packaging
+*.ipa
+*.dSYM
+*.dSYM.zip
+
+# Swift Package Manager
+.build/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
