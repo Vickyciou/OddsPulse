@@ -5,7 +5,7 @@
 ## Development Order
 
 1. 移除 `Main.storyboard` app flow，建立 programmatic root。
-2. 建立 domain DTO/model 與 mock data generator。
+2. 建立 domain DTO/model 與固定 JSON fixture。
 3. 實作 mock REST services：matches 與 initial odds，並以平行請求取得初始資料。
 4. 補 matches + odds merge 與 `startTime` 排序測試。
 5. 建立 ViewModel，完成排序與初始 table render。
@@ -42,7 +42,10 @@ xcodebuild test -project OddsPulse.xcodeproj -scheme OddsPulse -destination 'pla
 - 即時 odds update 應能看出 cell 局部更新。
 - 需避免每秒多筆 update 導致 table 卡頓。
 - mock WebSocket 每秒最多產生 10 筆 update，且同 batch 內不重複 `matchID`。
+- live odds update path 不應呼叫整頁 `reloadData()`。
 - `disconnect()` 後不應再產生 update。
+- ViewModel 釋放時應 cancel 長生命週期 task 並 disconnect WebSocket client。
 - ViewModel 或 client 釋放後 timer 不應繼續 retain 相關物件。
 - 若用 log 驗證，log 應能區分 initial reload 與 row update 次數。
+- 測試聚焦 merge/sort、store update、WebSocket batch invariants 與 ViewModel row update intent；UI 順暢以人工檢查與架構說明補足。
 - 若沒有執行測試或 build，回覆需明確說明原因。

@@ -22,9 +22,9 @@ OddsPulse 是即時賽事賠率系統。App 需展示約 100 筆比賽資料，�
 ## 假設與邊界
 
 - `GET /matches` 與 `GET /odds` 是彼此獨立的初始資料來源，可平行請求。
-- `matchID` 是比賽的穩定唯一識別碼，用於合併 matches、initial odds 與 live odds updates。
-- `startTime` 使用 ISO8601 UTC 格式，例如 `2025-07-04T13:00:00Z`。
-- mock `/odds` 正常情況會為每場比賽提供初始賠率，但 App 仍需能處理缺少賠率的邊界情境。
+- `matchID` 依作業 payload 使用 `Int`，但只作為 opaque identifier，用於合併 matches、initial odds 與 live odds updates；若未來接真實 provider，可改為 `String` 或 provider-specific ID wrapper。
+- `startTime` 使用 ISO8601 UTC 格式，例如 `2025-07-04T13:00:00Z`，App 解析成 `Date` 後依時間升序排序；若時間相同，才使用 `matchID` 作 deterministic tie-breaker。
+- mock `/odds` 正常情況會為每場比賽提供初始賠率，但 App 仍需能處理缺少賠率的邊界情境；domain 以 `OddsState.available(teamAOdds:teamBOdds:)` 與 `OddsState.unavailable` 表達，UI 以 `--` 顯示缺少賠率。
 - 每筆 WebSocket message 都代表某一場比賽的完整賠率快照，包含 `teamAOdds` 與 `teamBOdds`。
 - mock WebSocket 使用 `Timer` 每秒推播一個 batch，每批包含 1-10 筆 odds updates。
 - 同一個 batch 內不重複更新同一個 `matchID`。
@@ -42,7 +42,7 @@ OddsPulse 是即時賽事賠率系統。App 需展示約 100 筆比賽資料，�
 | Language | Swift |
 | Architecture | MVVM |
 | Async | Swift Concurrency 優先 |
-| Data source | Mock data，可用 in-memory generator 或 JSON |
+| Data source | 固定 JSON fixture |
 
 ## Bonus Scope
 
