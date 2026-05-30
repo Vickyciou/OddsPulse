@@ -92,6 +92,9 @@ final class ViewController: UIViewController {
         viewModel.onStateChange = { [weak self] state in
             self?.render(state)
         }
+        viewModel.onRowsUpdated = { [weak self] rows, updatedIndexes in
+            self?.renderRowUpdates(rows: rows, updatedIndexes: updatedIndexes)
+        }
     }
 
     private func render(_ state: MatchesViewState) {
@@ -122,6 +125,15 @@ final class ViewController: UIViewController {
             messageLabel.isHidden = false
             activityIndicatorView.stopAnimating()
         }
+    }
+
+    private func renderRowUpdates(rows: [MatchRowViewModel], updatedIndexes: [Int]) {
+        self.rows = rows
+
+        let indexPaths = updatedIndexes.map { rowIndex in
+            IndexPath(row: rowIndex, section: 0)
+        }
+        tableView.reloadRows(at: indexPaths, with: .none)
     }
 }
 
