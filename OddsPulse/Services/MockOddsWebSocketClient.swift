@@ -2,16 +2,12 @@ import Foundation
 
 @MainActor
 protocol OddsWebSocketClientProtocol: AnyObject {
-    var oddsUpdates: AsyncStream<[OddsUpdateDTO]> { get }
-
-    func connect(matchIDs: [Int])
+    func connect(matchIDs: [Int]) -> AsyncStream<[OddsUpdateDTO]>
     func disconnect()
 }
 
 @MainActor
 final class MockOddsWebSocketClient: OddsWebSocketClientProtocol {
-    let oddsUpdates: AsyncStream<[OddsUpdateDTO]>
-
     private enum Constants {
         static let interval: TimeInterval = 1
         static let batchSizeRange = 1...10
@@ -20,24 +16,26 @@ final class MockOddsWebSocketClient: OddsWebSocketClientProtocol {
 
     private var timer: Timer?
     private var connectedMatchIDs: [Int] = []
-    private let oddsUpdatesContinuation: AsyncStream<[OddsUpdateDTO]>.Continuation
-
-    init() {
-        let streamPair = Self.makeOddsUpdatesStream()
-        oddsUpdates = streamPair.stream
-        oddsUpdatesContinuation = streamPair.continuation
-    }
+    private var oddsUpdatesContinuation: AsyncStream<[OddsUpdateDTO]>.Continuation?
 
     isolated deinit {
         disconnect()
-        oddsUpdatesContinuation.finish()
     }
 
-    func connect(matchIDs: [Int]) {
+    func connect(matchIDs: [Int]) -> AsyncStream<[OddsUpdateDTO]> {
         disconnect()
 
+        let streamPair = AsyncStream<[OddsUpdateDTO]>.makeStream(
+            of: [OddsUpdateDTO].self,
+            bufferingPolicy: .bufferingNewest(1)
+        )
+        oddsUpdatesContinuation = streamPair.continuation
+
         connectedMatchIDs = Array(Set(matchIDs))
-        guard !connectedMatchIDs.isEmpty else { return }
+        guard !connectedMatchIDs.isEmpty else {
+            streamPair.continuation.finish()
+            return streamPair.stream
+        }
 
         let timer = Timer(timeInterval: Constants.interval, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -46,12 +44,16 @@ final class MockOddsWebSocketClient: OddsWebSocketClientProtocol {
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
+
+        return streamPair.stream
     }
 
     func disconnect() {
         timer?.invalidate()
         timer = nil
         connectedMatchIDs = []
+        oddsUpdatesContinuation?.finish()
+        oddsUpdatesContinuation = nil
     }
 
     func makeUpdateBatch(matchIDs: [Int]) -> [OddsUpdateDTO] {
@@ -77,26 +79,10 @@ final class MockOddsWebSocketClient: OddsWebSocketClientProtocol {
         let batch = makeUpdateBatch(matchIDs: connectedMatchIDs)
         guard !batch.isEmpty else { return }
 
-        oddsUpdatesContinuation.yield(batch)
+        oddsUpdatesContinuation?.yield(batch)
     }
 
     private func makeRandomOdds() -> Decimal {
         Decimal(Int.random(in: Constants.oddsCentsRange)) / Decimal(100)
-    }
-
-    private static func makeOddsUpdatesStream() -> (
-        stream: AsyncStream<[OddsUpdateDTO]>,
-        continuation: AsyncStream<[OddsUpdateDTO]>.Continuation
-    ) {
-        var oddsUpdatesContinuation: AsyncStream<[OddsUpdateDTO]>.Continuation?
-        let oddsUpdates = AsyncStream<[OddsUpdateDTO]> { continuation in
-            oddsUpdatesContinuation = continuation
-        }
-
-        guard let oddsUpdatesContinuation else {
-            preconditionFailure("AsyncStream continuation must be created synchronously")
-        }
-
-        return (oddsUpdates, oddsUpdatesContinuation)
     }
 }

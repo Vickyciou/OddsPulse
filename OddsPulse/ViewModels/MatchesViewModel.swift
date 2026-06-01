@@ -54,8 +54,8 @@ final class MatchesViewModel {
             displayRows = rowMapper.makeRows(from: records)
             rowIndexByMatchID = makeRowIndexByMatchID(from: displayRows)
             state = .loaded(rows: displayRows)
-            startListeningForOddsUpdates()
-            oddsWebSocketClient.connect(matchIDs: records.map(\.matchID))
+            let oddsUpdates = oddsWebSocketClient.connect(matchIDs: records.map(\.matchID))
+            startListeningForOddsUpdates(oddsUpdates)
         } catch is CancellationError {
             return
         } catch {
@@ -69,10 +69,9 @@ final class MatchesViewModel {
         oddsWebSocketClient.disconnect()
     }
 
-    private func startListeningForOddsUpdates() {
+    private func startListeningForOddsUpdates(_ oddsUpdates: AsyncStream<[OddsUpdateDTO]>) {
         oddsUpdateTask?.cancel()
 
-        let oddsUpdates = oddsWebSocketClient.oddsUpdates
         oddsUpdateTask = Task { @MainActor [weak self] in
             for await updates in oddsUpdates {
                 guard !Task.isCancelled else { return }
