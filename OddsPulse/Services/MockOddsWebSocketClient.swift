@@ -2,7 +2,7 @@ import Foundation
 
 @MainActor
 protocol OddsWebSocketClientProtocol: AnyObject {
-    var onReceiveOddsUpdates: (([OddsUpdateDTO]) -> Void)? { get set }
+    var oddsUpdates: AsyncStream<[OddsUpdateDTO]> { get }
 
     func connect(matchIDs: [Int])
     func disconnect()
@@ -10,7 +10,7 @@ protocol OddsWebSocketClientProtocol: AnyObject {
 
 @MainActor
 final class MockOddsWebSocketClient: OddsWebSocketClientProtocol {
-    var onReceiveOddsUpdates: (([OddsUpdateDTO]) -> Void)?
+    let oddsUpdates: AsyncStream<[OddsUpdateDTO]>
 
     private enum Constants {
         static let interval: TimeInterval = 1
@@ -20,9 +20,17 @@ final class MockOddsWebSocketClient: OddsWebSocketClientProtocol {
 
     private var timer: Timer?
     private var connectedMatchIDs: [Int] = []
+    private let oddsUpdatesContinuation: AsyncStream<[OddsUpdateDTO]>.Continuation
+
+    init() {
+        let streamPair = Self.makeOddsUpdatesStream()
+        oddsUpdates = streamPair.stream
+        oddsUpdatesContinuation = streamPair.continuation
+    }
 
     isolated deinit {
         disconnect()
+        oddsUpdatesContinuation.finish()
     }
 
     func connect(matchIDs: [Int]) {
@@ -69,10 +77,26 @@ final class MockOddsWebSocketClient: OddsWebSocketClientProtocol {
         let batch = makeUpdateBatch(matchIDs: connectedMatchIDs)
         guard !batch.isEmpty else { return }
 
-        onReceiveOddsUpdates?(batch)
+        oddsUpdatesContinuation.yield(batch)
     }
 
     private func makeRandomOdds() -> Decimal {
         Decimal(Int.random(in: Constants.oddsCentsRange)) / Decimal(100)
+    }
+
+    private static func makeOddsUpdatesStream() -> (
+        stream: AsyncStream<[OddsUpdateDTO]>,
+        continuation: AsyncStream<[OddsUpdateDTO]>.Continuation
+    ) {
+        var oddsUpdatesContinuation: AsyncStream<[OddsUpdateDTO]>.Continuation?
+        let oddsUpdates = AsyncStream<[OddsUpdateDTO]> { continuation in
+            oddsUpdatesContinuation = continuation
+        }
+
+        guard let oddsUpdatesContinuation else {
+            preconditionFailure("AsyncStream continuation must be created synchronously")
+        }
+
+        return (oddsUpdates, oddsUpdatesContinuation)
     }
 }

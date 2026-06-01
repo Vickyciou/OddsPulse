@@ -19,6 +19,7 @@ final class MatchesViewModel {
     private let oddsStore: OddsStore
     private let rowMapper: MatchRowViewModelMapper
     private var rowIndexByMatchID: [Int: Int] = [:]
+    private var oddsUpdateTask: Task<Void, Never>?
 
     init(
         matchesService: MatchesServiceProtocol? = nil,
@@ -32,11 +33,10 @@ final class MatchesViewModel {
         self.oddsWebSocketClient = oddsWebSocketClient ?? MockOddsWebSocketClient()
         self.oddsStore = oddsStore
         self.rowMapper = rowMapper ?? MatchRowViewModelMapper()
-        bindOddsWebSocketClient()
     }
 
     isolated deinit {
-        oddsWebSocketClient.disconnect()
+        stopLiveUpdates()
     }
 
     func loadInitialMatches() async {
@@ -54,6 +54,7 @@ final class MatchesViewModel {
             displayRows = rowMapper.makeRows(from: records)
             rowIndexByMatchID = makeRowIndexByMatchID(from: displayRows)
             state = .loaded(rows: displayRows)
+            startListeningForOddsUpdates()
             oddsWebSocketClient.connect(matchIDs: records.map(\.matchID))
         } catch is CancellationError {
             return
@@ -62,20 +63,36 @@ final class MatchesViewModel {
         }
     }
 
-    private func bindOddsWebSocketClient() {
-        oddsWebSocketClient.onReceiveOddsUpdates = { [weak self] updates in
-            Task { [weak self] in
+    func stopLiveUpdates() {
+        oddsUpdateTask?.cancel()
+        oddsUpdateTask = nil
+        oddsWebSocketClient.disconnect()
+    }
+
+    private func startListeningForOddsUpdates() {
+        oddsUpdateTask?.cancel()
+
+        let oddsUpdates = oddsWebSocketClient.oddsUpdates
+        oddsUpdateTask = Task { @MainActor [weak self] in
+            for await updates in oddsUpdates {
+                guard !Task.isCancelled else { return }
                 await self?.handleOddsUpdates(updates)
             }
         }
     }
 
     private func handleOddsUpdates(_ updates: [OddsUpdateDTO]) async {
+        guard !Task.isCancelled else { return }
+
         let changedRecords = await oddsStore.applyOddsUpdates(updates)
+
+        guard !Task.isCancelled else { return }
+
         let changedRows = rowMapper.makeRows(from: changedRecords)
         var updatedIndexes: [Int] = []
 
         for row in changedRows {
+            guard !Task.isCancelled else { return }
             guard let rowIndex = rowIndexByMatchID[row.matchID] else { continue }
 
             displayRows[rowIndex] = row

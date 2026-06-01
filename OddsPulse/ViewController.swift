@@ -29,7 +29,8 @@ final class ViewController: UIViewController {
         }
     }
 
-    deinit {
+    isolated deinit {
+        viewModel.stopLiveUpdates()
         loadTask?.cancel()
     }
 

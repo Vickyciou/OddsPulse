@@ -22,4 +22,21 @@ final class MockOddsWebSocketClientTests: XCTestCase {
 
         XCTAssertEqual(client.makeUpdateBatch(matchIDs: []), [])
     }
+
+    func testConnectPublishesOddsUpdatesToStream() async {
+        let client = MockOddsWebSocketClient()
+        let matchIDs = [1001, 1002, 1003]
+        let updateTask = Task { @MainActor in
+            var iterator = client.oddsUpdates.makeAsyncIterator()
+            return await iterator.next()
+        }
+
+        client.connect(matchIDs: matchIDs)
+        let batch = await updateTask.value
+        client.disconnect()
+
+        let batchMatchIDs = batch?.map(\.matchID) ?? []
+        XCTAssertFalse(batchMatchIDs.isEmpty)
+        XCTAssertTrue(batchMatchIDs.allSatisfy { matchIDs.contains($0) })
+    }
 }
