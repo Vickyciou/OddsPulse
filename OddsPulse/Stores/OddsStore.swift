@@ -21,7 +21,10 @@ actor OddsStore {
         var changedRecords: [MatchRecord] = []
 
         for update in updates {
-            guard let index = indexByMatchID[update.matchID] else { continue }
+            guard let index = indexByMatchID[update.matchID] else {
+                print("Ignored odds update for unknown matchID: \(update.matchID)")
+                continue
+            }
 
             records[index].oddsState = .available(
                 teamAOdds: update.teamAOdds,

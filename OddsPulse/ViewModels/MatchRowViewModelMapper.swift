@@ -30,7 +30,7 @@ struct MatchRowViewModelMapper {
         case let .available(teamAOdds, teamBOdds):
             return "\(formatOdds(teamAOdds)) - \(formatOdds(teamBOdds))"
         case .unavailable:
-            return "Unavailable"
+            return "--"
         }
     }
 
