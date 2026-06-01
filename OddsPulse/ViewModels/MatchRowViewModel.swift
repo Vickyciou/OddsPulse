@@ -2,7 +2,9 @@ import Foundation
 
 struct MatchRowViewModel: Equatable {
     let matchID: Int
-    let title: String
+    let teamA: String
+    let teamB: String
     let startTimeText: String
-    let oddsText: String
+    let teamAOddsText: String
+    let teamBOddsText: String
 }

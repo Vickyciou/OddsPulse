@@ -17,20 +17,24 @@ struct MatchRowViewModelMapper {
     }
 
     private func makeRow(from record: MatchRecord) -> MatchRowViewModel {
-        MatchRowViewModel(
+        let oddsTexts = makeOddsTexts(from: record.oddsState)
+
+        return MatchRowViewModel(
             matchID: record.matchID,
-            title: "\(record.teamA) vs \(record.teamB)",
+            teamA: record.teamA,
+            teamB: record.teamB,
             startTimeText: dateFormatter.string(from: record.startTime),
-            oddsText: makeOddsText(from: record.oddsState)
+            teamAOddsText: oddsTexts.teamA,
+            teamBOddsText: oddsTexts.teamB
         )
     }
 
-    private func makeOddsText(from oddsState: OddsState) -> String {
+    private func makeOddsTexts(from oddsState: OddsState) -> (teamA: String, teamB: String) {
         switch oddsState {
         case let .available(teamAOdds, teamBOdds):
-            return "\(formatOdds(teamAOdds)) - \(formatOdds(teamBOdds))"
+            return (formatOdds(teamAOdds), formatOdds(teamBOdds))
         case .unavailable:
-            return "--"
+            return ("--", "--")
         }
     }
 
