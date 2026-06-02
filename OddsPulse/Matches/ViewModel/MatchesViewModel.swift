@@ -24,10 +24,11 @@ final class MatchesViewModel {
     private let oddsWebSocketClient: OddsWebSocketClientProtocol
     private let oddsStore: OddsStore
     private let rowMapper: MatchRowViewModelMapper
-    private let reconnectDelayNanoseconds: UInt64
+    private let reconnectPolicy: ReconnectPolicy
     private var rowIndexByMatchID: [Int: Int] = [:]
     private var oddsUpdateTask: Task<Void, Never>?
     private var isLiveUpdatesStopped = true
+    private var reconnectAttempt = 0
 
     init(
         matchesService: MatchesServiceProtocol? = nil,
@@ -35,14 +36,14 @@ final class MatchesViewModel {
         oddsWebSocketClient: OddsWebSocketClientProtocol? = nil,
         oddsStore: OddsStore = OddsStore(),
         rowMapper: MatchRowViewModelMapper? = nil,
-        reconnectDelayNanoseconds: UInt64 = 1_000_000_000
+        reconnectPolicy: ReconnectPolicy = .default
     ) {
         self.matchesService = matchesService ?? MockMatchesService()
         self.oddsService = oddsService ?? MockOddsService()
         self.oddsWebSocketClient = oddsWebSocketClient ?? MockOddsWebSocketClient()
         self.oddsStore = oddsStore
         self.rowMapper = rowMapper ?? MatchRowViewModelMapper()
-        self.reconnectDelayNanoseconds = reconnectDelayNanoseconds
+        self.reconnectPolicy = reconnectPolicy
     }
 
     isolated deinit {
@@ -83,6 +84,7 @@ final class MatchesViewModel {
     private func startListeningForOddsUpdates(matchIDs: [Int]) {
         oddsUpdateTask?.cancel()
         isLiveUpdatesStopped = false
+        reconnectAttempt = 0
         liveConnectionState = .connecting
         let initialEvents = oddsWebSocketClient.connect(matchIDs: matchIDs)
 
@@ -111,6 +113,10 @@ final class MatchesViewModel {
 
             guard !Task.isCancelled, !isLiveUpdatesStopped else { return }
             liveConnectionState = .reconnecting
+            let reconnectDelayNanoseconds = reconnectPolicy.delayNanoseconds(
+                forAttempt: reconnectAttempt
+            )
+            reconnectAttempt += 1
 
             do {
                 try await Task.sleep(nanoseconds: reconnectDelayNanoseconds)
@@ -123,6 +129,7 @@ final class MatchesViewModel {
     private func handleWebSocketEvent(_ event: OddsWebSocketEvent) async {
         switch event {
         case .connected:
+            reconnectAttempt = 0
             liveConnectionState = .connected
         case let .disconnected(reason):
             handleDisconnect(reason)
@@ -138,6 +145,7 @@ final class MatchesViewModel {
         case .manual:
             liveConnectionState = .disconnected(message: "Live updates stopped")
         case .noMatchIDs:
+            isLiveUpdatesStopped = true
             liveConnectionState = .disconnected(message: "No matches available for live updates")
         case .streamEnded:
             liveConnectionState = .reconnecting
@@ -180,5 +188,32 @@ final class MatchesViewModel {
                 (row.matchID, index)
             }
         )
+    }
+}
+
+struct ReconnectPolicy: Equatable {
+    nonisolated static let `default` = ReconnectPolicy(
+        initialDelayNanoseconds: 1_000_000_000,
+        maxDelayNanoseconds: 8_000_000_000,
+        jitterRangeNanoseconds: 250_000_000
+    )
+
+    let initialDelayNanoseconds: UInt64
+    let maxDelayNanoseconds: UInt64
+    let jitterRangeNanoseconds: UInt64
+
+    func delayNanoseconds(forAttempt attempt: Int) -> UInt64 {
+        let multiplier = UInt64(1) << UInt64(max(0, min(attempt, 20)))
+        let exponentialDelay = initialDelayNanoseconds.multipliedReportingOverflow(
+            by: multiplier
+        )
+        let cappedDelay = min(
+            exponentialDelay.overflow ? maxDelayNanoseconds : exponentialDelay.partialValue,
+            maxDelayNanoseconds
+        )
+
+        guard jitterRangeNanoseconds > 0 else { return cappedDelay }
+
+        return cappedDelay + UInt64.random(in: 0...jitterRangeNanoseconds)
     }
 }

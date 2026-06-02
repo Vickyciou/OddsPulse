@@ -112,7 +112,7 @@ final class MatchesViewModelTests: XCTestCase {
         let webSocketClient = FakeOddsWebSocketClient()
         let viewModel = makeViewModel(
             oddsWebSocketClient: webSocketClient,
-            reconnectDelayNanoseconds: 0
+            reconnectPolicy: .zeroDelay
         )
         let reconnectExpectation = expectation(description: "WebSocket reconnected")
         webSocketClient.onConnect = { connectCallCount in
@@ -152,7 +152,7 @@ final class MatchesViewModelTests: XCTestCase {
         let webSocketClient = FakeOddsWebSocketClient()
         let viewModel = makeViewModel(
             oddsWebSocketClient: webSocketClient,
-            reconnectDelayNanoseconds: 0
+            reconnectPolicy: .zeroDelay
         )
         let reconnectingExpectation = expectation(description: "Live updates reconnecting")
         var liveStates: [LiveConnectionState] = []
@@ -186,7 +186,7 @@ final class MatchesViewModelTests: XCTestCase {
         let webSocketClient = FakeOddsWebSocketClient()
         let viewModel = makeViewModel(
             oddsWebSocketClient: webSocketClient,
-            reconnectDelayNanoseconds: 0
+            reconnectPolicy: .zeroDelay
         )
         await viewModel.loadInitialMatches()
 
@@ -197,19 +197,40 @@ final class MatchesViewModelTests: XCTestCase {
         XCTAssertEqual(webSocketClient.disconnectCallCount, 1)
     }
 
+    func testReconnectPolicyUsesExponentialBackoffCappedByMaxDelay() {
+        let policy = ReconnectPolicy(
+            initialDelayNanoseconds: 1_000_000_000,
+            maxDelayNanoseconds: 4_000_000_000,
+            jitterRangeNanoseconds: 0
+        )
+
+        XCTAssertEqual(policy.delayNanoseconds(forAttempt: 0), 1_000_000_000)
+        XCTAssertEqual(policy.delayNanoseconds(forAttempt: 1), 2_000_000_000)
+        XCTAssertEqual(policy.delayNanoseconds(forAttempt: 2), 4_000_000_000)
+        XCTAssertEqual(policy.delayNanoseconds(forAttempt: 3), 4_000_000_000)
+    }
+
     private func makeViewModel(
         matchesService: MatchesServiceProtocol? = nil,
         oddsService: OddsServiceProtocol? = nil,
         oddsWebSocketClient: OddsWebSocketClientProtocol? = nil,
-        reconnectDelayNanoseconds: UInt64 = 0
+        reconnectPolicy: ReconnectPolicy = .zeroDelay
     ) -> MatchesViewModel {
         MatchesViewModel(
             matchesService: matchesService ?? FakeMatchesService(),
             oddsService: oddsService ?? FakeOddsService(),
             oddsWebSocketClient: oddsWebSocketClient ?? FakeOddsWebSocketClient(),
-            reconnectDelayNanoseconds: reconnectDelayNanoseconds
+            reconnectPolicy: reconnectPolicy
         )
     }
+}
+
+private extension ReconnectPolicy {
+    static let zeroDelay = ReconnectPolicy(
+        initialDelayNanoseconds: 0,
+        maxDelayNanoseconds: 0,
+        jitterRangeNanoseconds: 0
+    )
 }
 
 private struct FakeMatchesService: MatchesServiceProtocol {
