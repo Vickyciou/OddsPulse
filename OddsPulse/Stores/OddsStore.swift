@@ -17,12 +17,13 @@ actor OddsStore {
         records
     }
 
-    func applyOddsUpdates(_ updates: [OddsUpdateDTO]) -> [MatchRecord] {
+    func applyOddsUpdates(_ updates: [OddsUpdateDTO]) -> OddsUpdateApplyResult {
         var changedRecords: [MatchRecord] = []
+        var ignoredMatchIDs: [Int] = []
 
         for update in updates {
             guard let index = indexByMatchID[update.matchID] else {
-                print("Ignored odds update for unknown matchID: \(update.matchID)")
+                ignoredMatchIDs.append(update.matchID)
                 continue
             }
 
@@ -33,6 +34,14 @@ actor OddsStore {
             changedRecords.append(records[index])
         }
 
-        return changedRecords
+        return OddsUpdateApplyResult(
+            changedRecords: changedRecords,
+            ignoredMatchIDs: ignoredMatchIDs
+        )
     }
+}
+
+struct OddsUpdateApplyResult: Equatable {
+    let changedRecords: [MatchRecord]
+    let ignoredMatchIDs: [Int]
 }

@@ -89,6 +89,24 @@ final class MatchesViewModelTests: XCTestCase {
         XCTAssertEqual(updatedRows[1].teamBOddsText, "2.05")
     }
 
+    func testUnknownOddsUpdateRecordsDiagnosticWithoutEmittingRowUpdate() async {
+        let webSocketClient = FakeOddsWebSocketClient()
+        let viewModel = makeViewModel(oddsWebSocketClient: webSocketClient)
+        var didUpdateRows = false
+        viewModel.onRowsUpdated = { _, _ in
+            didUpdateRows = true
+        }
+
+        await viewModel.loadInitialMatches()
+        webSocketClient.send([
+            OddsUpdateDTO(matchID: 9999, teamAOdds: 1.88, teamBOdds: 2.05)
+        ])
+        await Task.yield()
+
+        XCTAssertFalse(didUpdateRows)
+        XCTAssertEqual(viewModel.ignoredOddsUpdateMatchIDs, [9999])
+    }
+
     func testLoadInitialMatchesEmitsLiveConnectionStates() async {
         let webSocketClient = FakeOddsWebSocketClient()
         let viewModel = makeViewModel(oddsWebSocketClient: webSocketClient)
@@ -171,6 +189,32 @@ final class MatchesViewModelTests: XCTestCase {
         XCTAssertTrue(liveStates.contains(.connected))
         XCTAssertTrue(liveStates.contains(.reconnecting))
     }
+
+    func testWebSocketFailureEmitsLiveFailureWithoutClearingRows() async {
+        let webSocketClient = FakeOddsWebSocketClient()
+        let viewModel = makeViewModel(
+            oddsWebSocketClient: webSocketClient,
+            reconnectPolicy: .zeroDelay
+        )
+        let failureExpectation = expectation(description: "Live updates failed")
+        var liveStates: [LiveConnectionState] = []
+        viewModel.onLiveConnectionStateChange = { state in
+            liveStates.append(state)
+            if state == .failed(message: "Live updates unavailable") {
+                failureExpectation.fulfill()
+            }
+        }
+
+        await viewModel.loadInitialMatches()
+        let loadedRows = viewModel.displayRows
+        webSocketClient.fail()
+
+        await fulfillment(of: [failureExpectation], timeout: 1)
+
+        XCTAssertEqual(viewModel.displayRows, loadedRows)
+        XCTAssertTrue(liveStates.contains(.failed(message: "Live updates unavailable")))
+    }
+
 
     func testStopLiveUpdatesDisconnectsWebSocket() async {
         let webSocketClient = FakeOddsWebSocketClient()
@@ -306,6 +350,11 @@ private final class FakeOddsWebSocketClient: OddsWebSocketClientProtocol {
     }
 
     func finishLatestConnection() {
+        continuations.last?.finish()
+    }
+
+    func fail() {
+        continuations.last?.yield(.failed(.connectionFailed))
         continuations.last?.finish()
     }
 }

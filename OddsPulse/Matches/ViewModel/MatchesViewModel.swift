@@ -18,6 +18,7 @@ final class MatchesViewModel {
             onLiveConnectionStateChange?(liveConnectionState)
         }
     }
+    private(set) var ignoredOddsUpdateMatchIDs: [Int] = []
 
     private let matchesService: MatchesServiceProtocol
     private let oddsService: OddsServiceProtocol
@@ -162,11 +163,12 @@ final class MatchesViewModel {
     private func handleOddsUpdates(_ updates: [OddsUpdateDTO]) async {
         guard !Task.isCancelled else { return }
 
-        let changedRecords = await oddsStore.applyOddsUpdates(updates)
+        let applyResult = await oddsStore.applyOddsUpdates(updates)
+        ignoredOddsUpdateMatchIDs.append(contentsOf: applyResult.ignoredMatchIDs)
 
         guard !Task.isCancelled else { return }
 
-        let changedRows = rowMapper.makeRows(from: changedRecords)
+        let changedRows = rowMapper.makeRows(from: applyResult.changedRecords)
         var updatedIndexes: [Int] = []
 
         for row in changedRows {

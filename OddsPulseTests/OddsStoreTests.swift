@@ -10,13 +10,14 @@ final class OddsStoreTests: XCTestCase {
         ]
         await store.replaceAll(records)
 
-        let changedRecords = await store.applyOddsUpdates([
+        let applyResult = await store.applyOddsUpdates([
             OddsUpdateDTO(matchID: 1002, teamAOdds: 1.88, teamBOdds: 2.05),
             OddsUpdateDTO(matchID: 9999, teamAOdds: 4.00, teamBOdds: 5.00)
         ])
         let allRecords = await store.allRecords()
 
-        XCTAssertEqual(changedRecords.map(\.matchID), [1002])
+        XCTAssertEqual(applyResult.changedRecords.map(\.matchID), [1002])
+        XCTAssertEqual(applyResult.ignoredMatchIDs, [9999])
         XCTAssertEqual(
             allRecords.first { $0.matchID == 1001 }?.oddsState,
             .unavailable
@@ -32,12 +33,13 @@ final class OddsStoreTests: XCTestCase {
         await store.replaceAll([makeRecord(matchID: 1001)])
         await store.replaceAll([makeRecord(matchID: 2001)])
 
-        let changedRecords = await store.applyOddsUpdates([
+        let applyResult = await store.applyOddsUpdates([
             OddsUpdateDTO(matchID: 1001, teamAOdds: 1.50, teamBOdds: 2.50),
             OddsUpdateDTO(matchID: 2001, teamAOdds: 1.75, teamBOdds: 2.25)
         ])
 
-        XCTAssertEqual(changedRecords.map(\.matchID), [2001])
+        XCTAssertEqual(applyResult.changedRecords.map(\.matchID), [2001])
+        XCTAssertEqual(applyResult.ignoredMatchIDs, [1001])
     }
 
     private func makeRecord(matchID: Int) -> MatchRecord {
