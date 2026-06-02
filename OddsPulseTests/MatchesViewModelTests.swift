@@ -133,18 +133,26 @@ final class MatchesViewModelTests: XCTestCase {
     func testUnknownOddsUpdateRecordsDiagnosticWithoutEmittingRowUpdate() async {
         let webSocketClient = FakeOddsWebSocketClient()
         let viewModel = makeViewModel(oddsWebSocketClient: webSocketClient)
+        let ignoredUpdateExpectation = expectation(description: "Ignored odds update recorded")
         var didUpdateRows = false
+        var ignoredMatchIDs: [Int] = []
         viewModel.onRowsUpdated = { _, _ in
             didUpdateRows = true
+        }
+        viewModel.onIgnoredOddsUpdates = { matchIDs in
+            ignoredMatchIDs = matchIDs
+            ignoredUpdateExpectation.fulfill()
         }
 
         await viewModel.loadInitialMatches()
         webSocketClient.send([
             OddsUpdateDTO(matchID: 9999, teamAOdds: 1.88, teamBOdds: 2.05)
         ])
-        await Task.yield()
+
+        await fulfillment(of: [ignoredUpdateExpectation], timeout: 1)
 
         XCTAssertFalse(didUpdateRows)
+        XCTAssertEqual(ignoredMatchIDs, [9999])
         XCTAssertEqual(viewModel.ignoredOddsUpdateMatchIDs, [9999])
     }
 

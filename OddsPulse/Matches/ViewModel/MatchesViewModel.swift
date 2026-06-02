@@ -5,6 +5,7 @@ final class MatchesViewModel {
     var onStateChange: ((MatchesViewState) -> Void)?
     var onRowsUpdated: (([MatchRowViewModel], [Int]) -> Void)?
     var onLiveConnectionStateChange: ((LiveConnectionState) -> Void)?
+    var onIgnoredOddsUpdates: (([Int]) -> Void)?
 
     private(set) var state: MatchesViewState = .idle {
         didSet {
@@ -182,6 +183,9 @@ final class MatchesViewModel {
 
         let applyResult = await oddsStore.applyOddsUpdates(updates)
         ignoredOddsUpdateMatchIDs.append(contentsOf: applyResult.ignoredMatchIDs)
+        if !applyResult.ignoredMatchIDs.isEmpty {
+            onIgnoredOddsUpdates?(applyResult.ignoredMatchIDs)
+        }
 
         guard !Task.isCancelled else { return }
 
