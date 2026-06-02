@@ -64,6 +64,47 @@ final class MatchesViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.state, .failed(message: "Unable to load matches"))
     }
 
+    func testLoadInitialMatchesRestoresSnapshotBeforeFetchingServices() async {
+        let oddsStore = OddsStore()
+        await oddsStore.replaceAll([
+            MatchRecord(
+                matchID: 2001,
+                teamA: "Sharks",
+                teamB: "Bulls",
+                startTime: Date(timeIntervalSince1970: 0),
+                oddsState: .available(teamAOdds: 1.75, teamBOdds: 2.25)
+            )
+        ])
+        let webSocketClient = FakeOddsWebSocketClient()
+        let viewModel = MatchesViewModel(
+            matchesService: FailingMatchesService(),
+            oddsService: FailingOddsService(),
+            oddsWebSocketClient: webSocketClient,
+            oddsStore: oddsStore,
+            reconnectPolicy: .zeroDelay
+        )
+        var states: [MatchesViewState] = []
+        viewModel.onStateChange = { state in
+            states.append(state)
+        }
+
+        await viewModel.loadInitialMatches()
+
+        XCTAssertEqual(states.count, 2)
+        XCTAssertEqual(states.first, .loading)
+
+        guard case let .loaded(rows) = states.last else {
+            XCTFail("Expected snapshot loaded state")
+            return
+        }
+
+        XCTAssertEqual(rows.map(\.matchID), [2001])
+        XCTAssertEqual(rows.first?.teamAOddsText, "1.75")
+        XCTAssertEqual(rows.first?.teamBOddsText, "2.25")
+        XCTAssertEqual(webSocketClient.connectedMatchIDs, [2001])
+    }
+
+
     func testOddsUpdatesWhenKnownMatchUpdatedEmitsRowsUpdatedForCorrectIndex() async {
         let webSocketClient = FakeOddsWebSocketClient()
         let viewModel = makeViewModel(oddsWebSocketClient: webSocketClient)
@@ -314,6 +355,18 @@ private struct FakeOddsService: OddsServiceProtocol {
 
     func fetchInitialOdds() async throws -> [OddsResponseDTO] {
         try fetchResult.value()
+    }
+}
+
+private struct FailingMatchesService: MatchesServiceProtocol {
+    func fetchMatches() async throws -> [MatchResponseDTO] {
+        throw FakeServiceError.fetchFailed
+    }
+}
+
+private struct FailingOddsService: OddsServiceProtocol {
+    func fetchInitialOdds() async throws -> [OddsResponseDTO] {
+        throw FakeServiceError.fetchFailed
     }
 }
 

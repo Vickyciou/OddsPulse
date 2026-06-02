@@ -42,6 +42,22 @@ final class OddsStoreTests: XCTestCase {
         XCTAssertEqual(applyResult.ignoredMatchIDs, [1001])
     }
 
+    func testSnapshotReturnsLatestRecords() async {
+        let store = OddsStore()
+        await store.replaceAll([makeRecord(matchID: 1001)])
+        _ = await store.applyOddsUpdates([
+            OddsUpdateDTO(matchID: 1001, teamAOdds: 1.75, teamBOdds: 2.25)
+        ])
+
+        let snapshot = await store.snapshot()
+
+        XCTAssertEqual(snapshot.records.map(\.matchID), [1001])
+        XCTAssertEqual(
+            snapshot.records.first?.oddsState,
+            .available(teamAOdds: 1.75, teamBOdds: 2.25)
+        )
+    }
+
     private func makeRecord(matchID: Int) -> MatchRecord {
         MatchRecord(
             matchID: matchID,

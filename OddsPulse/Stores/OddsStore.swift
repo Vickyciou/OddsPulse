@@ -17,6 +17,10 @@ actor OddsStore {
         records
     }
 
+    func snapshot() -> OddsSnapshot {
+        OddsSnapshot(records: records)
+    }
+
     func applyOddsUpdates(_ updates: [OddsUpdateDTO]) -> OddsUpdateApplyResult {
         var changedRecords: [MatchRecord] = []
         var ignoredMatchIDs: [Int] = []
@@ -44,4 +48,12 @@ actor OddsStore {
 struct OddsUpdateApplyResult: Equatable {
     let changedRecords: [MatchRecord]
     let ignoredMatchIDs: [Int]
+}
+
+struct OddsSnapshot: Equatable {
+    let records: [MatchRecord]
+
+    var isEmpty: Bool {
+        records.isEmpty
+    }
 }

@@ -54,6 +54,11 @@ final class MatchesViewModel {
     func loadInitialMatches() async {
         state = .loading
 
+        let snapshot = await oddsStore.snapshot()
+        if restoreSnapshotIfAvailable(snapshot) {
+            return
+        }
+
         do {
             async let matches = matchesService.fetchMatches()
             async let odds = oddsService.fetchInitialOdds()
@@ -63,15 +68,27 @@ final class MatchesViewModel {
                 odds: try await odds
             )
             await oddsStore.replaceAll(records)
-            displayRows = rowMapper.makeRows(from: records)
-            rowIndexByMatchID = makeRowIndexByMatchID(from: displayRows)
-            state = .loaded(rows: displayRows)
+            renderRecords(records)
             startListeningForOddsUpdates(matchIDs: records.map(\.matchID))
         } catch is CancellationError {
             return
         } catch {
             state = .failed(message: "Unable to load matches")
         }
+    }
+
+    private func restoreSnapshotIfAvailable(_ snapshot: OddsSnapshot) -> Bool {
+        guard !snapshot.isEmpty else { return false }
+
+        renderRecords(snapshot.records)
+        startListeningForOddsUpdates(matchIDs: snapshot.records.map(\.matchID))
+        return true
+    }
+
+    private func renderRecords(_ records: [MatchRecord]) {
+        displayRows = rowMapper.makeRows(from: records)
+        rowIndexByMatchID = makeRowIndexByMatchID(from: displayRows)
+        state = .loaded(rows: displayRows)
     }
 
     func stopLiveUpdates() {

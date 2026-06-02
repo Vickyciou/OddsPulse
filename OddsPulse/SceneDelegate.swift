@@ -10,14 +10,18 @@ import UIKit
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     var window: UIWindow?
+    private let oddsStore = OddsStore()
 
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let windowScene = scene as? UIWindowScene else { return }
 
         let window = UIWindow(windowScene: windowScene)
+        let viewModel = MatchesViewModel(oddsStore: oddsStore)
         window.backgroundColor = .systemBackground
-        window.rootViewController = UINavigationController(rootViewController: MatchesViewController())
+        window.rootViewController = UINavigationController(
+            rootViewController: MatchesViewController(viewModel: viewModel)
+        )
         window.makeKeyAndVisible()
         self.window = window
     }
