@@ -89,6 +89,46 @@ final class MatchesViewModelTests: XCTestCase {
         XCTAssertEqual(updatedRows[1].teamBOddsText, "2.05")
     }
 
+    func testOddsUpdatesReconnectsWhenStreamEndsUnexpectedly() async {
+        let webSocketClient = FakeOddsWebSocketClient()
+        let viewModel = makeViewModel(
+            oddsWebSocketClient: webSocketClient,
+            reconnectDelayNanoseconds: 0
+        )
+        let reconnectExpectation = expectation(description: "WebSocket reconnected")
+        webSocketClient.onConnect = { connectCallCount in
+            if connectCallCount == 2 {
+                reconnectExpectation.fulfill()
+            }
+        }
+
+        await viewModel.loadInitialMatches()
+        webSocketClient.finishLatestConnection()
+
+        await fulfillment(of: [reconnectExpectation], timeout: 1)
+
+        let rowsUpdatedExpectation = expectation(description: "Rows updated after reconnect")
+        var updatedRows: [MatchRowViewModel] = []
+        var updatedIndexes: [Int] = []
+        viewModel.onRowsUpdated = { rows, indexes in
+            updatedRows = rows
+            updatedIndexes = indexes
+            rowsUpdatedExpectation.fulfill()
+        }
+
+        webSocketClient.send([
+            OddsUpdateDTO(matchID: 1001, teamAOdds: 2.45, teamBOdds: 1.65)
+        ])
+
+        await fulfillment(of: [rowsUpdatedExpectation], timeout: 1)
+
+        XCTAssertEqual(webSocketClient.connectCallCount, 2)
+        XCTAssertEqual(updatedIndexes, [0])
+        XCTAssertEqual(updatedRows[0].matchID, 1001)
+        XCTAssertEqual(updatedRows[0].teamAOddsText, "2.45")
+        XCTAssertEqual(updatedRows[0].teamBOddsText, "1.65")
+    }
+
     func testStopLiveUpdatesDisconnectsWebSocket() async {
         let webSocketClient = FakeOddsWebSocketClient()
         let viewModel = makeViewModel(oddsWebSocketClient: webSocketClient)
@@ -99,15 +139,32 @@ final class MatchesViewModelTests: XCTestCase {
         XCTAssertEqual(webSocketClient.disconnectCallCount, 1)
     }
 
+    func testStopLiveUpdatesPreventsReconnectWhenStreamFinishes() async {
+        let webSocketClient = FakeOddsWebSocketClient()
+        let viewModel = makeViewModel(
+            oddsWebSocketClient: webSocketClient,
+            reconnectDelayNanoseconds: 0
+        )
+        await viewModel.loadInitialMatches()
+
+        viewModel.stopLiveUpdates()
+        await Task.yield()
+
+        XCTAssertEqual(webSocketClient.connectCallCount, 1)
+        XCTAssertEqual(webSocketClient.disconnectCallCount, 1)
+    }
+
     private func makeViewModel(
         matchesService: MatchesServiceProtocol? = nil,
         oddsService: OddsServiceProtocol? = nil,
-        oddsWebSocketClient: OddsWebSocketClientProtocol? = nil
+        oddsWebSocketClient: OddsWebSocketClientProtocol? = nil,
+        reconnectDelayNanoseconds: UInt64 = 0
     ) -> MatchesViewModel {
         MatchesViewModel(
             matchesService: matchesService ?? FakeMatchesService(),
             oddsService: oddsService ?? FakeOddsService(),
-            oddsWebSocketClient: oddsWebSocketClient ?? FakeOddsWebSocketClient()
+            oddsWebSocketClient: oddsWebSocketClient ?? FakeOddsWebSocketClient(),
+            reconnectDelayNanoseconds: reconnectDelayNanoseconds
         )
     }
 }
@@ -154,29 +211,38 @@ private struct FakeOddsService: OddsServiceProtocol {
 
 @MainActor
 private final class FakeOddsWebSocketClient: OddsWebSocketClientProtocol {
-    private var continuation: AsyncStream<[OddsUpdateDTO]>.Continuation?
+    private var continuations: [AsyncStream<OddsWebSocketEvent>.Continuation] = []
 
+    var onConnect: ((Int) -> Void)?
     private(set) var connectedMatchIDs: [Int] = []
+    private(set) var connectCallCount = 0
     private(set) var disconnectCallCount = 0
 
-    func connect(matchIDs: [Int]) -> AsyncStream<[OddsUpdateDTO]> {
+    func connect(matchIDs: [Int]) -> AsyncStream<OddsWebSocketEvent> {
+        connectCallCount += 1
         connectedMatchIDs = matchIDs
 
-        let streamPair = AsyncStream<[OddsUpdateDTO]>.makeStream(
-            of: [OddsUpdateDTO].self
+        let streamPair = AsyncStream<OddsWebSocketEvent>.makeStream(
+            of: OddsWebSocketEvent.self
         )
-        continuation = streamPair.continuation
+        continuations.append(streamPair.continuation)
+        streamPair.continuation.yield(.connected)
+        onConnect?(connectCallCount)
         return streamPair.stream
     }
 
     func disconnect() {
         disconnectCallCount += 1
-        continuation?.finish()
-        continuation = nil
+        continuations.forEach { $0.finish() }
+        continuations = []
     }
 
     func send(_ updates: [OddsUpdateDTO]) {
-        continuation?.yield(updates)
+        continuations.last?.yield(.oddsUpdated(updates))
+    }
+
+    func finishLatestConnection() {
+        continuations.last?.finish()
     }
 }
 

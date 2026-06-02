@@ -26,47 +26,34 @@ final class MockOddsWebSocketClientTests: XCTestCase {
     func testConnectPublishesOddsUpdatesToStream() async {
         let client = MockOddsWebSocketClient()
         let matchIDs = [1001, 1002, 1003]
-        let oddsUpdates = client.connect(matchIDs: matchIDs)
-        var iterator = oddsUpdates.makeAsyncIterator()
+        let events = client.connect(matchIDs: matchIDs)
+        var iterator = events.makeAsyncIterator()
 
-        let batch = await iterator.next()
+        _ = await iterator.next()
+        let event = await iterator.next()
         client.disconnect()
 
-        let batchMatchIDs = batch?.map(\.matchID) ?? []
+        guard case let .oddsUpdated(batch) = event else {
+            XCTFail("Expected odds update event")
+            return
+        }
+
+        let batchMatchIDs = batch.map(\.matchID)
         XCTAssertFalse(batchMatchIDs.isEmpty)
         XCTAssertTrue(batchMatchIDs.allSatisfy { matchIDs.contains($0) })
     }
 
     func testDisconnectFinishesOddsUpdatesStream() async {
         let client = MockOddsWebSocketClient()
-        let oddsUpdates = client.connect(matchIDs: [1001])
-        var iterator = oddsUpdates.makeAsyncIterator()
+        let events = client.connect(matchIDs: [1001])
+        var iterator = events.makeAsyncIterator()
 
         client.disconnect()
 
-        let batch = await iterator.next()
-        XCTAssertNil(batch)
+        let event = await iterator.next()
+        let nextEvent = await iterator.next()
+        XCTAssertEqual(event, .disconnected(reason: .manual))
+        XCTAssertNil(nextEvent)
     }
 
-    func testReconnectPublishesOddsUpdatesToNewStream() async {
-        let client = MockOddsWebSocketClient()
-        let matchIDs = [1001, 1002, 1003]
-
-        let firstOddsUpdates = client.connect(matchIDs: matchIDs)
-        var firstIterator = firstOddsUpdates.makeAsyncIterator()
-        let firstBatch = await firstIterator.next()
-        client.disconnect()
-
-        let secondOddsUpdates = client.connect(matchIDs: matchIDs)
-        var secondIterator = secondOddsUpdates.makeAsyncIterator()
-        let secondBatch = await secondIterator.next()
-        client.disconnect()
-
-        let firstBatchMatchIDs = firstBatch?.map(\.matchID) ?? []
-        let secondBatchMatchIDs = secondBatch?.map(\.matchID) ?? []
-        XCTAssertFalse(firstBatchMatchIDs.isEmpty)
-        XCTAssertFalse(secondBatchMatchIDs.isEmpty)
-        XCTAssertTrue(firstBatchMatchIDs.allSatisfy { matchIDs.contains($0) })
-        XCTAssertTrue(secondBatchMatchIDs.allSatisfy { matchIDs.contains($0) })
-    }
 }

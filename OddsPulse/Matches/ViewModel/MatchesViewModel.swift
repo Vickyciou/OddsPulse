@@ -18,21 +18,25 @@ final class MatchesViewModel {
     private let oddsWebSocketClient: OddsWebSocketClientProtocol
     private let oddsStore: OddsStore
     private let rowMapper: MatchRowViewModelMapper
+    private let reconnectDelayNanoseconds: UInt64
     private var rowIndexByMatchID: [Int: Int] = [:]
     private var oddsUpdateTask: Task<Void, Never>?
+    private var isLiveUpdatesStopped = true
 
     init(
         matchesService: MatchesServiceProtocol? = nil,
         oddsService: OddsServiceProtocol? = nil,
         oddsWebSocketClient: OddsWebSocketClientProtocol? = nil,
         oddsStore: OddsStore = OddsStore(),
-        rowMapper: MatchRowViewModelMapper? = nil
+        rowMapper: MatchRowViewModelMapper? = nil,
+        reconnectDelayNanoseconds: UInt64 = 1_000_000_000
     ) {
         self.matchesService = matchesService ?? MockMatchesService()
         self.oddsService = oddsService ?? MockOddsService()
         self.oddsWebSocketClient = oddsWebSocketClient ?? MockOddsWebSocketClient()
         self.oddsStore = oddsStore
         self.rowMapper = rowMapper ?? MatchRowViewModelMapper()
+        self.reconnectDelayNanoseconds = reconnectDelayNanoseconds
     }
 
     isolated deinit {
@@ -54,8 +58,7 @@ final class MatchesViewModel {
             displayRows = rowMapper.makeRows(from: records)
             rowIndexByMatchID = makeRowIndexByMatchID(from: displayRows)
             state = .loaded(rows: displayRows)
-            let oddsUpdates = oddsWebSocketClient.connect(matchIDs: records.map(\.matchID))
-            startListeningForOddsUpdates(oddsUpdates)
+            startListeningForOddsUpdates(matchIDs: records.map(\.matchID))
         } catch is CancellationError {
             return
         } catch {
@@ -64,19 +67,56 @@ final class MatchesViewModel {
     }
 
     func stopLiveUpdates() {
+        isLiveUpdatesStopped = true
         oddsUpdateTask?.cancel()
         oddsUpdateTask = nil
         oddsWebSocketClient.disconnect()
     }
 
-    private func startListeningForOddsUpdates(_ oddsUpdates: AsyncStream<[OddsUpdateDTO]>) {
+    private func startListeningForOddsUpdates(matchIDs: [Int]) {
         oddsUpdateTask?.cancel()
+        isLiveUpdatesStopped = false
+        let initialEvents = oddsWebSocketClient.connect(matchIDs: matchIDs)
 
         oddsUpdateTask = Task { @MainActor [weak self] in
-            for await updates in oddsUpdates {
+            await self?.runLiveUpdates(
+                matchIDs: matchIDs,
+                initialEvents: initialEvents
+            )
+        }
+    }
+
+    private func runLiveUpdates(
+        matchIDs: [Int],
+        initialEvents: AsyncStream<OddsWebSocketEvent>
+    ) async {
+        var events: AsyncStream<OddsWebSocketEvent>? = initialEvents
+
+        while !Task.isCancelled && !isLiveUpdatesStopped {
+            let currentEvents = events ?? oddsWebSocketClient.connect(matchIDs: matchIDs)
+            events = nil
+
+            for await event in currentEvents {
                 guard !Task.isCancelled else { return }
-                await self?.handleOddsUpdates(updates)
+                await handleWebSocketEvent(event)
             }
+
+            guard !Task.isCancelled, !isLiveUpdatesStopped else { return }
+
+            do {
+                try await Task.sleep(nanoseconds: reconnectDelayNanoseconds)
+            } catch {
+                return
+            }
+        }
+    }
+
+    private func handleWebSocketEvent(_ event: OddsWebSocketEvent) async {
+        switch event {
+        case .connected, .disconnected, .failed:
+            return
+        case let .oddsUpdated(updates):
+            await handleOddsUpdates(updates)
         }
     }
 
