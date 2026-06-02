@@ -16,6 +16,7 @@ final class MatchesViewController: UIViewController {
     private lazy var tableView = makeTableView()
     private lazy var activityIndicatorView = makeActivityIndicatorView()
     private lazy var messageLabel = makeMessageLabel()
+    private lazy var connectionStatusLabel = makeConnectionStatusLabel()
 
     init(viewModel: MatchesViewModel? = nil) {
         self.viewModel = viewModel ?? MatchesViewModel()
@@ -57,6 +58,7 @@ final class MatchesViewController: UIViewController {
     }
 
     private func configureHierarchy() {
+        view.addSubview(connectionStatusLabel)
         view.addSubview(tableView)
         view.addSubview(activityIndicatorView)
         view.addSubview(messageLabel)
@@ -64,7 +66,10 @@ final class MatchesViewController: UIViewController {
 
     private func configureConstraints() {
         NSLayoutConstraint.activate([
-            tableView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+            connectionStatusLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            connectionStatusLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
+            connectionStatusLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
+            tableView.topAnchor.constraint(equalTo: connectionStatusLabel.bottomAnchor, constant: 8),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -12),
@@ -82,6 +87,9 @@ final class MatchesViewController: UIViewController {
         }
         viewModel.onRowsUpdated = { [weak self] rows, updatedIndexes in
             self?.renderRowUpdates(rows: rows, updatedIndexes: updatedIndexes)
+        }
+        viewModel.onLiveConnectionStateChange = { [weak self] state in
+            self?.renderLiveConnectionState(state)
         }
     }
 
@@ -123,6 +131,29 @@ final class MatchesViewController: UIViewController {
         }
         tableView.reloadRows(at: indexPaths, with: .none)
     }
+
+    private func renderLiveConnectionState(_ state: LiveConnectionState) {
+        switch state {
+        case .idle:
+            connectionStatusLabel.text = "Live updates idle"
+            connectionStatusLabel.textColor = .secondaryLabel
+        case .connecting:
+            connectionStatusLabel.text = "Connecting live updates..."
+            connectionStatusLabel.textColor = .secondaryLabel
+        case .connected:
+            connectionStatusLabel.text = "Live updates connected"
+            connectionStatusLabel.textColor = .systemGreen
+        case .reconnecting:
+            connectionStatusLabel.text = "Reconnecting live updates..."
+            connectionStatusLabel.textColor = .systemOrange
+        case let .disconnected(message):
+            connectionStatusLabel.text = message
+            connectionStatusLabel.textColor = .secondaryLabel
+        case let .failed(message):
+            connectionStatusLabel.text = message
+            connectionStatusLabel.textColor = .systemRed
+        }
+    }
 }
 
 // MARK: - Factory Methods
@@ -155,6 +186,17 @@ extension MatchesViewController {
         label.textAlignment = .center
         label.numberOfLines = 0
         label.isHidden = true
+        return label
+    }
+
+    private func makeConnectionStatusLabel() -> UILabel {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = .preferredFont(forTextStyle: .caption1)
+        label.textColor = .secondaryLabel
+        label.textAlignment = .left
+        label.numberOfLines = 1
+        label.text = "Live updates idle"
         return label
     }
 }

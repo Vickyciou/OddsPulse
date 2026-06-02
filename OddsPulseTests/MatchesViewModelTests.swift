@@ -89,6 +89,25 @@ final class MatchesViewModelTests: XCTestCase {
         XCTAssertEqual(updatedRows[1].teamBOddsText, "2.05")
     }
 
+    func testLoadInitialMatchesEmitsLiveConnectionStates() async {
+        let webSocketClient = FakeOddsWebSocketClient()
+        let viewModel = makeViewModel(oddsWebSocketClient: webSocketClient)
+        let connectedExpectation = expectation(description: "Live updates connected")
+        var liveStates: [LiveConnectionState] = []
+        viewModel.onLiveConnectionStateChange = { state in
+            liveStates.append(state)
+            if state == .connected {
+                connectedExpectation.fulfill()
+            }
+        }
+
+        await viewModel.loadInitialMatches()
+
+        await fulfillment(of: [connectedExpectation], timeout: 1)
+
+        XCTAssertEqual(liveStates, [.connecting, .connected])
+    }
+
     func testOddsUpdatesReconnectsWhenStreamEndsUnexpectedly() async {
         let webSocketClient = FakeOddsWebSocketClient()
         let viewModel = makeViewModel(
@@ -127,6 +146,30 @@ final class MatchesViewModelTests: XCTestCase {
         XCTAssertEqual(updatedRows[0].matchID, 1001)
         XCTAssertEqual(updatedRows[0].teamAOddsText, "2.45")
         XCTAssertEqual(updatedRows[0].teamBOddsText, "1.65")
+    }
+
+    func testUnexpectedStreamEndEmitsReconnectingState() async {
+        let webSocketClient = FakeOddsWebSocketClient()
+        let viewModel = makeViewModel(
+            oddsWebSocketClient: webSocketClient,
+            reconnectDelayNanoseconds: 0
+        )
+        let reconnectingExpectation = expectation(description: "Live updates reconnecting")
+        var liveStates: [LiveConnectionState] = []
+        viewModel.onLiveConnectionStateChange = { state in
+            liveStates.append(state)
+            if state == .reconnecting {
+                reconnectingExpectation.fulfill()
+            }
+        }
+
+        await viewModel.loadInitialMatches()
+        webSocketClient.finishLatestConnection()
+
+        await fulfillment(of: [reconnectingExpectation], timeout: 1)
+
+        XCTAssertTrue(liveStates.contains(.connected))
+        XCTAssertTrue(liveStates.contains(.reconnecting))
     }
 
     func testStopLiveUpdatesDisconnectsWebSocket() async {

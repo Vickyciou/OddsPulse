@@ -4,6 +4,7 @@ import Foundation
 final class MatchesViewModel {
     var onStateChange: ((MatchesViewState) -> Void)?
     var onRowsUpdated: (([MatchRowViewModel], [Int]) -> Void)?
+    var onLiveConnectionStateChange: ((LiveConnectionState) -> Void)?
 
     private(set) var state: MatchesViewState = .idle {
         didSet {
@@ -12,6 +13,11 @@ final class MatchesViewModel {
     }
 
     private(set) var displayRows: [MatchRowViewModel] = []
+    private(set) var liveConnectionState: LiveConnectionState = .idle {
+        didSet {
+            onLiveConnectionStateChange?(liveConnectionState)
+        }
+    }
 
     private let matchesService: MatchesServiceProtocol
     private let oddsService: OddsServiceProtocol
@@ -71,11 +77,13 @@ final class MatchesViewModel {
         oddsUpdateTask?.cancel()
         oddsUpdateTask = nil
         oddsWebSocketClient.disconnect()
+        liveConnectionState = .disconnected(message: "Live updates stopped")
     }
 
     private func startListeningForOddsUpdates(matchIDs: [Int]) {
         oddsUpdateTask?.cancel()
         isLiveUpdatesStopped = false
+        liveConnectionState = .connecting
         let initialEvents = oddsWebSocketClient.connect(matchIDs: matchIDs)
 
         oddsUpdateTask = Task { @MainActor [weak self] in
@@ -102,6 +110,7 @@ final class MatchesViewModel {
             }
 
             guard !Task.isCancelled, !isLiveUpdatesStopped else { return }
+            liveConnectionState = .reconnecting
 
             do {
                 try await Task.sleep(nanoseconds: reconnectDelayNanoseconds)
@@ -113,10 +122,32 @@ final class MatchesViewModel {
 
     private func handleWebSocketEvent(_ event: OddsWebSocketEvent) async {
         switch event {
-        case .connected, .disconnected, .failed:
-            return
+        case .connected:
+            liveConnectionState = .connected
+        case let .disconnected(reason):
+            handleDisconnect(reason)
+        case let .failed(error):
+            handleWebSocketError(error)
         case let .oddsUpdated(updates):
             await handleOddsUpdates(updates)
+        }
+    }
+
+    private func handleDisconnect(_ reason: OddsWebSocketDisconnectReason) {
+        switch reason {
+        case .manual:
+            liveConnectionState = .disconnected(message: "Live updates stopped")
+        case .noMatchIDs:
+            liveConnectionState = .disconnected(message: "No matches available for live updates")
+        case .streamEnded:
+            liveConnectionState = .reconnecting
+        }
+    }
+
+    private func handleWebSocketError(_ error: OddsWebSocketError) {
+        switch error {
+        case .connectionFailed:
+            liveConnectionState = .failed(message: "Live updates unavailable")
         }
     }
 
