@@ -3,6 +3,10 @@ import UIKit
 @MainActor
 final class MatchesViewController: UIViewController {
 
+    private enum Layout {
+        static let rowHeight: CGFloat = 72
+    }
+
     // MARK: - Properties
 
     private let viewModel: MatchesViewModel
@@ -128,8 +132,7 @@ extension MatchesViewController {
         let tableView = UITableView(frame: .zero, style: .plain)
         tableView.translatesAutoresizingMaskIntoConstraints = false
         tableView.dataSource = self
-        tableView.rowHeight = UITableView.automaticDimension
-        tableView.estimatedRowHeight = 72
+        tableView.rowHeight = Layout.rowHeight
         tableView.register(
             MatchTableViewCell.self,
             forCellReuseIdentifier: MatchTableViewCell.reuseIdentifier
