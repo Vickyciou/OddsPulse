@@ -1,14 +1,17 @@
 import UIKit
 
 @MainActor
-final class ViewController: UIViewController {
+final class MatchesViewController: UIViewController {
+
+    // MARK: - Properties
+
     private let viewModel: MatchesViewModel
     private var rows: [MatchRowViewModel] = []
     private var loadTask: Task<Void, Never>?
 
-    private let tableView = UITableView(frame: .zero, style: .plain)
-    private let activityIndicatorView = UIActivityIndicatorView(style: .large)
-    private let messageLabel = UILabel()
+    private lazy var tableView = makeTableView()
+    private lazy var activityIndicatorView = makeActivityIndicatorView()
+    private lazy var messageLabel = makeMessageLabel()
 
     init(viewModel: MatchesViewModel? = nil) {
         self.viewModel = viewModel ?? MatchesViewModel()
@@ -20,6 +23,13 @@ final class ViewController: UIViewController {
         fatalError("init(coder:) has not been implemented")
     }
 
+    isolated deinit {
+        viewModel.stopLiveUpdates()
+        loadTask?.cancel()
+    }
+
+    // MARK: - View Lifecycle
+
     override func viewDidLoad() {
         super.viewDidLoad()
         configureView()
@@ -29,60 +39,33 @@ final class ViewController: UIViewController {
         }
     }
 
-    isolated deinit {
-        viewModel.stopLiveUpdates()
-        loadTask?.cancel()
-    }
+    // MARK: - Methods
 
     private func configureView() {
-        title = "OddsPulse"
-        view.backgroundColor = .systemBackground
-
-        configureTableView()
-        configureActivityIndicatorView()
-        configureMessageLabel()
+        configureAppearance()
+        configureHierarchy()
+        configureConstraints()
     }
 
-    private func configureTableView() {
-        tableView.translatesAutoresizingMaskIntoConstraints = false
-        tableView.dataSource = self
-        tableView.rowHeight = UITableView.automaticDimension
-        tableView.estimatedRowHeight = 72
-        tableView.register(
-            MatchTableViewCell.self,
-            forCellReuseIdentifier: MatchTableViewCell.reuseIdentifier
-        )
-        view.addSubview(tableView)
+    private func configureAppearance() {
+        title = "OddsPulse"
+        view.backgroundColor = .systemBackground
+    }
 
+    private func configureHierarchy() {
+        view.addSubview(tableView)
+        view.addSubview(activityIndicatorView)
+        view.addSubview(messageLabel)
+    }
+
+    private func configureConstraints() {
         NSLayoutConstraint.activate([
             tableView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
-            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -12)
-        ])
-    }
-
-    private func configureActivityIndicatorView() {
-        activityIndicatorView.translatesAutoresizingMaskIntoConstraints = false
-        activityIndicatorView.hidesWhenStopped = true
-        view.addSubview(activityIndicatorView)
-
-        NSLayoutConstraint.activate([
+            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -12),
             activityIndicatorView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            activityIndicatorView.centerYAnchor.constraint(equalTo: view.centerYAnchor)
-        ])
-    }
-
-    private func configureMessageLabel() {
-        messageLabel.translatesAutoresizingMaskIntoConstraints = false
-        messageLabel.font = .preferredFont(forTextStyle: .body)
-        messageLabel.textColor = .secondaryLabel
-        messageLabel.textAlignment = .center
-        messageLabel.numberOfLines = 0
-        messageLabel.isHidden = true
-        view.addSubview(messageLabel)
-
-        NSLayoutConstraint.activate([
+            activityIndicatorView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             messageLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
             messageLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
             messageLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor)
@@ -138,7 +121,44 @@ final class ViewController: UIViewController {
     }
 }
 
-extension ViewController: UITableViewDataSource {
+// MARK: - Factory Methods
+
+extension MatchesViewController {
+    private func makeTableView() -> UITableView {
+        let tableView = UITableView(frame: .zero, style: .plain)
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        tableView.dataSource = self
+        tableView.rowHeight = UITableView.automaticDimension
+        tableView.estimatedRowHeight = 72
+        tableView.register(
+            MatchTableViewCell.self,
+            forCellReuseIdentifier: MatchTableViewCell.reuseIdentifier
+        )
+        return tableView
+    }
+
+    private func makeActivityIndicatorView() -> UIActivityIndicatorView {
+        let activityIndicatorView = UIActivityIndicatorView(style: .large)
+        activityIndicatorView.translatesAutoresizingMaskIntoConstraints = false
+        activityIndicatorView.hidesWhenStopped = true
+        return activityIndicatorView
+    }
+
+    private func makeMessageLabel() -> UILabel {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = .preferredFont(forTextStyle: .body)
+        label.textColor = .secondaryLabel
+        label.textAlignment = .center
+        label.numberOfLines = 0
+        label.isHidden = true
+        return label
+    }
+}
+
+// MARK: - UITableViewDataSource
+
+extension MatchesViewController: UITableViewDataSource {
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         rows.count
     }

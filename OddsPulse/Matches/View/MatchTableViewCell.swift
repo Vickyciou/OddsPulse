@@ -3,15 +3,22 @@ import UIKit
 final class MatchTableViewCell: UITableViewCell {
     static let reuseIdentifier = "MatchTableViewCell"
 
+    // MARK: - Properties
+
     private enum Layout {
         static let teamColumnWidthMultiplier = 0.3
     }
 
-    private let teamALabel = UILabel()
-    private let teamBLabel = UILabel()
-    private let startTimeLabel = UILabel()
-    private let teamAOddsLabel = UILabel()
-    private let teamBOddsLabel = UILabel()
+    private lazy var teamALabel = makeTeamLabel()
+    private lazy var teamBLabel = makeTeamLabel()
+    private lazy var startTimeLabel = makeStartTimeLabel()
+    private lazy var teamAOddsLabel = makeOddsLabel()
+    private lazy var teamBOddsLabel = makeOddsLabel()
+    private lazy var teamAStackView = makeTeamStackView(teamLabel: teamALabel, oddsLabel: teamAOddsLabel)
+    private lazy var teamBStackView = makeTeamStackView(teamLabel: teamBLabel, oddsLabel: teamBOddsLabel)
+    private lazy var contentStackView = makeContentStackView()
+
+    // MARK: - Lifecycle
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -23,6 +30,8 @@ final class MatchTableViewCell: UITableViewCell {
         fatalError("init(coder:) has not been implemented")
     }
 
+    // MARK: - Methods
+
     func configure(with row: MatchRowViewModel) {
         teamALabel.text = row.teamA
         teamBLabel.text = row.teamB
@@ -32,29 +41,16 @@ final class MatchTableViewCell: UITableViewCell {
     }
 
     private func configureView() {
-        selectionStyle = .none
-        accessoryType = .none
+        configureAppearance()
+        configureHierarchy()
+        configureConstraints()
+    }
 
-        configureTeamLabel(teamALabel)
-        configureTeamLabel(teamBLabel)
-        configureOddsLabel(teamAOddsLabel)
-        configureOddsLabel(teamBOddsLabel)
+    private func configureHierarchy() {
+        contentView.addSubview(contentStackView)
+    }
 
-        startTimeLabel.font = .preferredFont(forTextStyle: .subheadline)
-        startTimeLabel.textColor = .secondaryLabel
-        startTimeLabel.textAlignment = .right
-        startTimeLabel.adjustsFontForContentSizeCategory = true
-        startTimeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-
-        let teamAStackView = makeTeamStackView(teamLabel: teamALabel, oddsLabel: teamAOddsLabel)
-        let teamBStackView = makeTeamStackView(teamLabel: teamBLabel, oddsLabel: teamBOddsLabel)
-        let contentStackView = UIStackView(arrangedSubviews: [teamAStackView, teamBStackView, startTimeLabel])
-        contentStackView.axis = .horizontal
-        contentStackView.alignment = .top
-        contentStackView.distribution = .fill
-        contentStackView.spacing = 16
-        contentStackView.translatesAutoresizingMaskIntoConstraints = false
-
+    private func configureConstraints() {
         teamAStackView.widthAnchor.constraint(
             equalTo: contentStackView.widthAnchor,
             multiplier: Layout.teamColumnWidthMultiplier
@@ -64,8 +60,6 @@ final class MatchTableViewCell: UITableViewCell {
             multiplier: Layout.teamColumnWidthMultiplier
         ).isActive = true
 
-        contentView.addSubview(contentStackView)
-
         NSLayoutConstraint.activate([
             contentStackView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 10),
             contentStackView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
@@ -74,23 +68,56 @@ final class MatchTableViewCell: UITableViewCell {
         ])
     }
 
-    private func configureTeamLabel(_ label: UILabel) {
+    private func configureAppearance() {
+        selectionStyle = .none
+        accessoryType = .none
+    }
+}
+
+// MARK: - Factory Methods
+
+extension MatchTableViewCell {
+    private func makeTeamLabel() -> UILabel {
+        let label = UILabel()
         label.font = .preferredFont(forTextStyle: .headline)
         label.adjustsFontForContentSizeCategory = true
         label.numberOfLines = 1
         label.lineBreakMode = .byTruncatingTail
+        return label
     }
 
-    private func configureOddsLabel(_ label: UILabel) {
+    private func makeOddsLabel() -> UILabel {
+        let label = UILabel()
         label.font = .monospacedDigitSystemFont(ofSize: 17, weight: .semibold)
         label.adjustsFontForContentSizeCategory = true
         label.numberOfLines = 1
+        return label
+    }
+
+    private func makeStartTimeLabel() -> UILabel {
+        let label = UILabel()
+        label.font = .preferredFont(forTextStyle: .subheadline)
+        label.textColor = .secondaryLabel
+        label.textAlignment = .right
+        label.adjustsFontForContentSizeCategory = true
+        label.setContentCompressionResistancePriority(.required, for: .horizontal)
+        return label
     }
 
     private func makeTeamStackView(teamLabel: UILabel, oddsLabel: UILabel) -> UIStackView {
         let stackView = UIStackView(arrangedSubviews: [teamLabel, oddsLabel])
         stackView.axis = .vertical
         stackView.spacing = 6
+        return stackView
+    }
+
+    private func makeContentStackView() -> UIStackView {
+        let stackView = UIStackView(arrangedSubviews: [teamAStackView, teamBStackView, startTimeLabel])
+        stackView.axis = .horizontal
+        stackView.alignment = .top
+        stackView.distribution = .fill
+        stackView.spacing = 16
+        stackView.translatesAutoresizingMaskIntoConstraints = false
         return stackView
     }
 }
