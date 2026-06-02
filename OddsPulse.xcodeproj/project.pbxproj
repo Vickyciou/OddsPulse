@@ -53,11 +53,6 @@
 			path = OddsPulseTests;
 			sourceTree = "<group>";
 		};
-		FA11FBD12FC940190041FF98 /* OddsPulseUITests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = OddsPulseUITests;
-			sourceTree = "<group>";
-		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -90,7 +85,6 @@
 			children = (
 				FA11FBB02FC940180041FF98 /* OddsPulse */,
 				FA11FBC72FC940190041FF98 /* OddsPulseTests */,
-				FA11FBD12FC940190041FF98 /* OddsPulseUITests */,
 				FA11FBAF2FC940180041FF98 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -165,9 +159,6 @@
 			);
 			dependencies = (
 				FA11FBD02FC940190041FF98 /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				FA11FBD12FC940190041FF98 /* OddsPulseUITests */,
 			);
 			name = OddsPulseUITests;
 			packageProductDependencies = (
