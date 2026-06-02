@@ -133,15 +133,9 @@ final class MatchesViewModelTests: XCTestCase {
     func testUnknownOddsUpdateRecordsDiagnosticWithoutEmittingRowUpdate() async {
         let webSocketClient = FakeOddsWebSocketClient()
         let viewModel = makeViewModel(oddsWebSocketClient: webSocketClient)
-        let ignoredUpdateExpectation = expectation(description: "Ignored odds update recorded")
         var didUpdateRows = false
-        var ignoredMatchIDs: [Int] = []
         viewModel.onRowsUpdated = { _, _ in
             didUpdateRows = true
-        }
-        viewModel.onIgnoredOddsUpdates = { matchIDs in
-            ignoredMatchIDs = matchIDs
-            ignoredUpdateExpectation.fulfill()
         }
 
         await viewModel.loadInitialMatches()
@@ -149,10 +143,11 @@ final class MatchesViewModelTests: XCTestCase {
             OddsUpdateDTO(matchID: 9999, teamAOdds: 1.88, teamBOdds: 2.05)
         ])
 
-        await fulfillment(of: [ignoredUpdateExpectation], timeout: 1)
+        await waitUntil {
+            viewModel.ignoredOddsUpdateMatchIDs == [9999]
+        }
 
         XCTAssertFalse(didUpdateRows)
-        XCTAssertEqual(ignoredMatchIDs, [9999])
         XCTAssertEqual(viewModel.ignoredOddsUpdateMatchIDs, [9999])
     }
 
@@ -315,6 +310,25 @@ final class MatchesViewModelTests: XCTestCase {
             oddsWebSocketClient: oddsWebSocketClient ?? FakeOddsWebSocketClient(),
             reconnectPolicy: reconnectPolicy
         )
+    }
+
+    private func waitUntil(
+        timeoutNanoseconds: UInt64 = 1_000_000_000,
+        condition: @escaping @MainActor () -> Bool,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        let deadline = ContinuousClock.now + .nanoseconds(Int64(timeoutNanoseconds))
+
+        while ContinuousClock.now < deadline {
+            if condition() {
+                return
+            }
+
+            await Task.yield()
+        }
+
+        XCTFail("Condition was not met before timeout", file: file, line: line)
     }
 }
 
