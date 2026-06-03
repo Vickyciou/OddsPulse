@@ -4,47 +4,93 @@
 
 ## Current Baseline
 
-目前專案由 Xcode UIKit template 建立，後續需移除 `Main.storyboard` 畫面流程，改用 programmatic UI 建立 root view controller 與 table view。
+OddsPulse 使用 UIKit programmatic UI 與 MVVM。REST mock、WebSocket mock、thread-safe cache 與 reconnect 策略集中在 `LiveOddsProvider`，ViewModel 只消費 provider event 並轉成畫面狀態。
 
 ## Target Architecture
 
 ```text
 Mock REST services
-  -> MatchRepository / OddsRepository
+  -> LiveOddsProvider
+      -> MatchRecordMapper
       -> OddsStore actor
-          -> MatchesViewModel
-              -> MatchesViewController
-                  -> UITableView cells
+          -> LiveOddsEvent.recordsLoaded
+              -> MatchesViewModel
+                  -> MatchesViewController
+                      -> UITableView cells
 
 Mock WebSocket stream
   -> MockOddsWebSocketClient (Timer)
-      -> MatchesViewModel
+      -> LiveOddsProvider
           -> OddsStore actor
-              -> row-level update intent
-                  -> MatchesViewController
+              -> LiveOddsEvent.oddsUpdated
+                  -> MatchesViewModel
+                      -> row-level update intent
+                          -> MatchesViewController
+
+ReconnectPolicy
+  -> LiveOddsProvider
+      -> LiveOddsEvent.feedStatusChanged
+          -> MatchesViewModel
+              -> MatchesViewController status label
+```
+
+## LiveOddsProvider Interface
+
+`LiveOddsProvider` 是 odds 資料的單一入口。ViewModel 不直接打 API、不直接 connect WebSocket，也不直接讀寫 `OddsStore`。
+
+```swift
+protocol LiveOddsProviderProtocol: Sendable {
+    func stream() -> AsyncStream<LiveOddsEvent>
+}
+
+enum LiveOddsEvent: Equatable {
+    case loading
+    case recordsLoaded([MatchRecord])
+    case oddsUpdated(changedRecords: [MatchRecord])
+    case feedStatusChanged(LiveOddsFeedStatus)
+    case initialLoadFailed(message: String)
+}
+
+enum LiveOddsFeedStatus: Equatable {
+    case idle
+    case connecting
+    case live
+    case reconnecting
+    case unavailable(message: String)
+}
 ```
 
 ## Data Merge And Update Flow
 
-1. 平行請求 mock `/matches` 與 mock `/odds`，並從固定 JSON fixture decode DTO。
-2. 使用 `matchID` 將比賽基本資料與初始賠率合併。
-3. 使用解析後的 `startTime: Date` 依時間升序排序；時間相同時才用 `matchID` 作 deterministic tie-breaker。
-4. ViewModel 將合併後的資料轉成 table row view models。
-5. `MockOddsWebSocketClient` 使用 `Timer` 每秒產生 1-10 筆 odds update batch。
-6. 同一個 batch 內避免重複 `matchID`。
-7. 每筆 update 以 `matchID` 找到既有比賽資料並覆蓋最新 odds snapshot。
-8. ViewModel 產生 row-level update intent，ViewController 只更新受影響的 row。
+1. ViewModel 訂閱 `LiveOddsProvider.stream()`。
+2. Provider 先讀 `OddsStore.snapshot()`；若 snapshot 不空，立即 emit `.recordsLoaded(snapshot.records)`。
+3. snapshot 為空時，Provider emit `.loading`，並平行請求 mock `/matches` 與 mock `/odds`。
+4. `MatchRecordMapper` 使用 `matchID` 將比賽基本資料與初始賠率合併，依 `startTime` 升序排序；時間相同時用 `matchID` 作 deterministic tie-breaker。
+5. Provider 將 records 寫入 `OddsStore`，再 emit `.recordsLoaded(records)`。
+6. Provider 啟動 `MockOddsWebSocketClient`，並 emit feed status。
+7. WebSocket 每秒產生 1-10 筆 odds update batch；同一 batch 內避免重複 `matchID`。
+8. Provider 將 odds updates 套用到 `OddsStore`，只把 changed records 透過 `.oddsUpdated(changedRecords:)` emit 給 ViewModel。
+9. ViewModel 將 changed records 轉成 row view models，產生 row-level update intent，ViewController 只更新受影響的 row。
+
+## Cache Scope
+
+本專案的快取是 in-memory scene/session cache：
+
+- `LiveOddsProvider` 內部持有 `OddsStore actor`。
+- `SceneDependencies` 持有 shared `LiveOddsProviderProtocol`，讓同一個 scene 內新建立的 ViewModel 訂閱同一份 provider。
+- 切換畫面後，新 ViewModel 可立即從 provider 收到 store snapshot，不需等待 `/matches` 與 `/odds` 重新完成。
+- WebSocket 更新會寫回同一個 store，因此快速恢復顯示時會包含最新 WebSocket-applied odds。
+- 此快取不做 disk persistence，不承諾 app 被終止後仍可離線恢復；賠率資料仍以 mock API 與 WebSocket feed 為 source of truth。
 
 ## Mock WebSocket Client
 
-- `Timer` 只存在於 mock WebSocket client，不放在 ViewController。
-- `Timer` 加到 main run loop 的 `.common` mode，timer callback 只產生 batch 並透過 closure 丟出事件，不做 domain mutation 或 UI 更新。
-- ViewModel 依賴 `OddsWebSocketClientProtocol`，不依賴具體 mock 實作。
-- WebSocket client 使用 callback closure，例如 `onReceiveOddsUpdates: (([OddsUpdateDTO]) -> Void)?`。
+- `Timer` 只存在於 mock WebSocket client，不放在 ViewController 或 ViewModel。
+- `Timer` 加到 main run loop 的 `.common` mode，timer callback 只產生 batch 並透過 `AsyncStream<OddsWebSocketEvent>` 丟出事件，不做 domain mutation 或 UI 更新。
+- `LiveOddsProvider` 依賴 `OddsWebSocketClientProtocol`，不依賴具體 mock 實作。
 - `connect(matchIDs:)` 開始每秒 batch 推播。
 - `connect(matchIDs:)` 會先停止既有 timer，維持同一個 client instance 同時間只有一個 active timer。
 - `disconnect()` 停止推播並 `invalidate()` timer；此操作需可重複呼叫且保持安全。
-- `Timer` closure 與 ViewModel 設定的 callback 都使用 weak capture，避免 retain cycle；`deinit` 需確保 timer 已被 invalidate。
+- `Timer` closure 使用 weak capture，避免 retain cycle；`deinit` 需確保 timer 已被 invalidate。
 - 若未來改接真實 WebSocket，只替換 client 實作，不影響 ViewModel 與 UI 層。
 
 ## Layer Responsibilities
@@ -52,14 +98,17 @@ Mock WebSocket stream
 | Layer | 職責 |
 |:---|:---|
 | ViewController | 建立 UIKit view、綁定 ViewModel output、維護 table rows 並套用 row updates |
-| ViewModel | 載入資料、管理畫面狀態、維護 `displayRows` 與 `matchID -> row index`，將 odds update 轉成 `MatchRowUpdate(index, row)` |
-| Repository / Service | 模擬 `/matches`、`/odds` 與 WebSocket odds update |
-| Store / Actor | 保護共享 match/odds state，確保 thread-safe |
-| Models | 定義 API/mock model 與 UI display model |
+| ViewModel | 訂閱 `LiveOddsProvider`、管理畫面狀態、維護 `displayRows` 與 `matchID -> row index`，將 provider event 轉成 row update |
+| LiveOddsProvider | 統一資料來源，管理 snapshot、initial API load、WebSocket lifecycle、subscriber count 與 reconnect |
+| Service / WebSocket Client | 模擬 `/matches`、`/odds` 與 WebSocket odds update |
+| Store / Actor | 保護共享 match/odds state，確保 thread-safe，提供 snapshot 並套用 partial odds updates |
+| Models | 定義 API/mock model、domain model 與 UI display model |
 
 ## State Ownership
 
 - 比賽與賠率的 canonical state 由 `OddsStore` actor 管理。
+- `OddsStore` 由 `LiveOddsProvider` 持有，是 provider 的 implementation detail。
+- `SceneDependencies` 只持有 shared provider，避免 ViewModel 或 SceneDelegate 直接接觸 store。
 - `MatchesViewModel` 標記為 `@MainActor`，持有畫面需要的 display state，不直接暴露 mutable model。
 - ViewController 不直接修改 domain state。
 - UI 更新需回到 main actor。
@@ -68,25 +117,34 @@ Mock WebSocket stream
 
 - 初次載入可使用完整 table reload。
 - 即時 odds update 不使用整頁 `reloadData()`。
-- odds update 應由 ViewModel 轉成 `MatchRowUpdate(index, row)`。
-- ViewController 收到 live update 時先更新本地 rows；若 row 目前可見，直接 reconfigure visible cell，若不可見則不做額外 UI work。
+- odds update 應由 ViewModel 轉成 affected row indexes。
+- ViewController 收到 live update 時先更新本地 rows，再用 `reloadRows(at:with:)` 只更新受影響的 row。
 - 更新 cell 時需注意 cell reuse，避免舊資料閃爍或錯位。
 
 ## Live Update Thread-safety Flow
 
-Live odds updates 由 `MockOddsWebSocketClient` 產生，client 持有 `Timer` 並每秒送出 `[OddsUpdateDTO]` batch。
-`MatchesViewModel` 收到 batch 後會橋接到 async work，並交給 `OddsStore` actor 更新 canonical match/odds state。
+Live odds updates 由 `MockOddsWebSocketClient` 產生，client 持有 `Timer` 並透過 `AsyncStream<OddsWebSocketEvent>` 送出 `[OddsUpdateDTO]` batch。
+`LiveOddsProvider` 收到 batch 後交給 `OddsStore` actor 更新 canonical match/odds state。
 `OddsStore` 會序列化資料修改、忽略未知 `matchID`，並回傳已更新的 `MatchRecord`。
-由於 `MatchesViewModel` 是 `@MainActor`，它會安全地把 `MatchRecord` 轉成 `MatchRowViewModel`、更新 `displayRows`，再送出 `MatchRowUpdate(index, row)`。
+由於 `MatchesViewModel` 是 `@MainActor`，它會安全地消費 provider event，把 `MatchRecord` 轉成 `MatchRowViewModel`、更新 `displayRows`，再送出 row update intent。
 `MatchesViewController` 只負責把這些 row updates 套用到 table view，因此 live odds 更新不需要整頁 `reloadData()`。
+
+## Reconnect Strategy
+
+- `OddsWebSocketClient` 只負責 transport/mock feed，不決定是否重連。
+- `LiveOddsProvider` 根據 subscriber count 決定是否需要維持 live feed。
+- subscriber count 歸零時，Provider 取消 live task 並呼叫 `disconnect()`，不再重連。
+- unexpected stream end 會根據 `ReconnectPolicy` 進行 exponential backoff、max delay、jitter 與 retry limit。
+- `ReconnectPolicy.default.maxAttempts` 為 5；超過後 emit `.feedStatusChanged(.unavailable(message: "Live odds unavailable"))`。
+- UI 顯示產品語意，例如 `Live`、`Reconnecting odds...`、`Live odds unavailable`，不顯示 WebSocket 技術細節。
 
 ## Concurrency Direction
 
-- 使用 Swift Concurrency 表達 mock REST request、state access 與 ViewModel async workflow。
+- 使用 Swift Concurrency 表達 mock REST request、state access 與 provider async workflow。
 - mock WebSocket 依題目要求使用 `Timer` 模擬推播節奏。
-- 優先使用 structured concurrency。
+- `LiveOddsProvider` 與 `MatchesViewModel` 的長生命週期 observation 使用可取消的 task，並在 subscriber 或 ViewModel 結束時停止。
 - actor 用於保護共享 mutable state。
-- 長生命週期 task、timer 或 callback 需有明確停止機制；ViewModel 釋放時需 cancel tasks 並 disconnect WebSocket client。
+- 長生命週期 task、timer 或 stream 需有明確停止機制；ViewModel 釋放時需 cancel observation task，Provider 無 subscriber 時需 disconnect WebSocket client。
 - 修改 concurrency 相關程式碼時，使用 `swift-concurrency-pro` 做檢查。
 
 ## Testing Strategy
@@ -96,6 +154,8 @@ Live odds updates 由 `MockOddsWebSocketClient` 產生，client 持有 `Timer` �
 | Sorting | 測試 `startTime` 升序 |
 | Merge logic | 測試 matches + initial odds 合併 |
 | Odds update | 測試指定 match 的 odds 更新 |
-| Thread safety | 測試 concurrent updates 不造成 state 不一致 |
+| Thread safety | 測試 actor store 合併資料時不造成 state 不一致 |
 | WebSocket batch | 測試 batch size、同 batch 不重複 `matchID`、只從輸入 matchIDs 產生 update |
-| ViewModel output | 測試 `MatchRowUpdate(index, row)` 指向正確 row 且包含更新後 display data |
+| Provider output | 測試 snapshot restore、initial load、odds update、subscriber cancellation 與 reconnect max attempts |
+| ViewModel output | 測試 provider event 可正確轉成 loaded state、row update 與 feed status |
+| Cache restore | 測試新 subscriber 可立即收到 cached records，且包含最新 WebSocket-applied odds |

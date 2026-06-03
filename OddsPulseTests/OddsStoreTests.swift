@@ -1,6 +1,7 @@
 import XCTest
 @testable import OddsPulse
 
+@MainActor
 final class OddsStoreTests: XCTestCase {
     func testApplyOddsUpdatesChangesKnownRecordsOnly() async {
         let store = OddsStore()
