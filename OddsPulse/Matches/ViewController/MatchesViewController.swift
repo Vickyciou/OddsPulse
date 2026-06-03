@@ -1,4 +1,5 @@
 import UIKit
+import OSLog
 
 @MainActor
 final class MatchesViewController: UIViewController {
@@ -10,6 +11,9 @@ final class MatchesViewController: UIViewController {
     // MARK: - Properties
 
     private let viewModel: MatchesViewModel
+    private let logger = Logger(subsystem: "OddsPulse", category: "TableUpdate")
+    private var initialReloadCount = 0
+    private var liveUpdateCount = 0
 
     private lazy var tableView = makeTableView()
     private lazy var activityIndicatorView = makeActivityIndicatorView()
@@ -101,6 +105,7 @@ final class MatchesViewController: UIViewController {
             activityIndicatorView.startAnimating()
         case let .loaded(rows):
             tableView.reloadData()
+            logInitialReload(rowCount: rows.count)
             tableView.isHidden = rows.isEmpty
             messageLabel.text = "No matches available"
             messageLabel.isHidden = !rows.isEmpty
@@ -115,15 +120,25 @@ final class MatchesViewController: UIViewController {
     }
 
     private func renderRowUpdates(updatedRowIndexes: [Int]) {
+        let indexPaths = makeVisibleUpdatedIndexPaths(from: updatedRowIndexes)
+
+        if !indexPaths.isEmpty {
+            tableView.reloadRows(at: indexPaths, with: .none)
+        }
+
+        logLiveRowUpdate(
+            updatedRowCount: updatedRowIndexes.count,
+            visibleReloadCount: indexPaths.count
+        )
+    }
+
+    private func makeVisibleUpdatedIndexPaths(from updatedRowIndexes: [Int]) -> [IndexPath] {
         let visibleIndexPaths = Set(tableView.indexPathsForVisibleRows ?? [])
-        let indexPaths = updatedRowIndexes.map { rowIndex in
+        return updatedRowIndexes.map { rowIndex in
             IndexPath(row: rowIndex, section: 0)
         }.filter { indexPath in
             visibleIndexPaths.contains(indexPath)
         }
-        guard !indexPaths.isEmpty else { return }
-
-        tableView.reloadRows(at: indexPaths, with: .none)
     }
 
     private func renderFeedStatus(_ feedStatus: LiveOddsFeedStatus) {
@@ -212,5 +227,24 @@ extension MatchesViewController: UITableViewDataSource {
 
         cell.configure(with: viewModel.rows[indexPath.row])
         return cell
+    }
+}
+
+// MARK: - Diagnostics
+
+private extension MatchesViewController {
+    func logInitialReload(rowCount: Int) {
+        initialReloadCount += 1
+        logger.info("Initial reload #\(self.initialReloadCount, privacy: .public) rows=\(rowCount, privacy: .public)")
+    }
+
+    func logLiveRowUpdate(
+        updatedRowCount: Int,
+        visibleReloadCount: Int
+    ) {
+        liveUpdateCount += 1
+        let skippedRowCount = updatedRowCount - visibleReloadCount
+
+        logger.info("Live update #\(self.liveUpdateCount, privacy: .public) updatedRows=\(updatedRowCount, privacy: .public) visibleReloads=\(visibleReloadCount, privacy: .public) skippedOffscreen=\(skippedRowCount, privacy: .public)")
     }
 }
