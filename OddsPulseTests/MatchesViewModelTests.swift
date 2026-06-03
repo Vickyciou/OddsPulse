@@ -6,6 +6,10 @@ final class MatchesViewModelTests: XCTestCase {
     func testStartWhenProviderEmitsLoadingUpdatesState() async {
         let provider = FakeLiveOddsProvider()
         let viewModel = MatchesViewModel(liveOddsProvider: provider)
+        defer {
+            viewModel.stopObservingLiveOdds()
+            provider.finish()
+        }
         var states: [MatchesViewState] = []
         viewModel.onStateChange = { state in
             states.append(state)
@@ -14,6 +18,7 @@ final class MatchesViewModelTests: XCTestCase {
         viewModel.start()
         await waitUntil { provider.streamCallCount == 1 }
         provider.send(.loading)
+        await waitUntil { viewModel.state == .loading }
 
         XCTAssertEqual(states, [.loading])
         XCTAssertEqual(viewModel.state, .loading)
@@ -22,6 +27,10 @@ final class MatchesViewModelTests: XCTestCase {
     func testRecordsLoadedMapsRowsAndEmitsLoadedState() async {
         let provider = FakeLiveOddsProvider()
         let viewModel = MatchesViewModel(liveOddsProvider: provider)
+        defer {
+            viewModel.stopObservingLiveOdds()
+            provider.finish()
+        }
         var states: [MatchesViewState] = []
         viewModel.onStateChange = { state in
             states.append(state)
@@ -30,6 +39,13 @@ final class MatchesViewModelTests: XCTestCase {
         viewModel.start()
         await waitUntil { provider.streamCallCount == 1 }
         provider.send(.recordsLoaded(Self.makeRecords()))
+        await waitUntil {
+            if case .loaded = viewModel.state {
+                return true
+            }
+
+            return false
+        }
 
         guard case let .loaded(rows) = states.last else {
             XCTFail("Expected loaded state")
@@ -45,6 +61,10 @@ final class MatchesViewModelTests: XCTestCase {
     func testInitialLoadFailedEmitsFailedState() async {
         let provider = FakeLiveOddsProvider()
         let viewModel = MatchesViewModel(liveOddsProvider: provider)
+        defer {
+            viewModel.stopObservingLiveOdds()
+            provider.finish()
+        }
         var states: [MatchesViewState] = []
         viewModel.onStateChange = { state in
             states.append(state)
@@ -53,6 +73,9 @@ final class MatchesViewModelTests: XCTestCase {
         viewModel.start()
         await waitUntil { provider.streamCallCount == 1 }
         provider.send(.initialLoadFailed(message: "Unable to load matches"))
+        await waitUntil {
+            viewModel.state == .failed(message: "Unable to load matches")
+        }
 
         XCTAssertEqual(states, [
             .failed(message: "Unable to load matches")
@@ -63,6 +86,10 @@ final class MatchesViewModelTests: XCTestCase {
     func testOddsUpdatedEmitsRowsUpdatedForChangedRecord() async {
         let provider = FakeLiveOddsProvider()
         let viewModel = MatchesViewModel(liveOddsProvider: provider)
+        defer {
+            viewModel.stopObservingLiveOdds()
+            provider.finish()
+        }
         var updatedRows: [MatchRowViewModel] = []
         var updatedIndexes: [Int] = []
         viewModel.onRowsUpdated = { rows, indexes in
@@ -73,6 +100,7 @@ final class MatchesViewModelTests: XCTestCase {
         viewModel.start()
         await waitUntil { provider.streamCallCount == 1 }
         provider.send(.recordsLoaded(Self.makeRecords()))
+        await waitUntil { viewModel.displayRows.count == 2 }
         provider.send(.oddsUpdated(changedRecords: [
             MatchRecord(
                 matchID: 1002,
@@ -82,6 +110,7 @@ final class MatchesViewModelTests: XCTestCase {
                 oddsState: .available(teamAOdds: 1.88, teamBOdds: 2.05)
             )
         ]))
+        await waitUntil { updatedIndexes == [1] }
 
         XCTAssertEqual(updatedIndexes, [1])
         XCTAssertEqual(updatedRows[1].matchID, 1002)
@@ -92,6 +121,10 @@ final class MatchesViewModelTests: XCTestCase {
     func testOddsUpdatedForUnknownRowDoesNotEmitRowsUpdated() async {
         let provider = FakeLiveOddsProvider()
         let viewModel = MatchesViewModel(liveOddsProvider: provider)
+        defer {
+            viewModel.stopObservingLiveOdds()
+            provider.finish()
+        }
         var didUpdateRows = false
         viewModel.onRowsUpdated = { _, _ in
             didUpdateRows = true
@@ -100,6 +133,7 @@ final class MatchesViewModelTests: XCTestCase {
         viewModel.start()
         await waitUntil { provider.streamCallCount == 1 }
         provider.send(.recordsLoaded(Self.makeRecords()))
+        await waitUntil { viewModel.displayRows.count == 2 }
         provider.send(.oddsUpdated(changedRecords: [
             MatchRecord(
                 matchID: 9999,
@@ -109,6 +143,7 @@ final class MatchesViewModelTests: XCTestCase {
                 oddsState: .available(teamAOdds: 1.88, teamBOdds: 2.05)
             )
         ]))
+        await yieldMainActor()
 
         XCTAssertFalse(didUpdateRows)
     }
@@ -116,6 +151,10 @@ final class MatchesViewModelTests: XCTestCase {
     func testFeedStatusChangedUpdatesFeedStatus() async {
         let provider = FakeLiveOddsProvider()
         let viewModel = MatchesViewModel(liveOddsProvider: provider)
+        defer {
+            viewModel.stopObservingLiveOdds()
+            provider.finish()
+        }
         var feedStatuses: [LiveOddsFeedStatus] = []
         viewModel.onFeedStatusChange = { feedStatus in
             feedStatuses.append(feedStatus)
@@ -126,6 +165,9 @@ final class MatchesViewModelTests: XCTestCase {
         provider.send(.feedStatusChanged(.connecting))
         provider.send(.feedStatusChanged(.live))
         provider.send(.feedStatusChanged(.reconnecting))
+        await waitUntil {
+            feedStatuses == [.connecting, .live, .reconnecting]
+        }
 
         XCTAssertEqual(feedStatuses, [.connecting, .live, .reconnecting])
         XCTAssertEqual(viewModel.feedStatus, .reconnecting)
@@ -137,10 +179,15 @@ final class MatchesViewModelTests: XCTestCase {
 
         viewModel.start()
         await waitUntil { provider.streamCallCount == 1 }
+        provider.send(.loading)
+        await waitUntil { viewModel.state == .loading }
+
         viewModel.stopObservingLiveOdds()
         await waitUntil { provider.terminationCount == 1 }
+        provider.send(.initialLoadFailed(message: "Should not update stopped view model"))
+        await yieldMainActor()
 
-        XCTAssertEqual(provider.terminationCount, 1)
+        XCTAssertEqual(viewModel.state, .loading)
     }
 
     private func waitUntil(
@@ -160,6 +207,12 @@ final class MatchesViewModelTests: XCTestCase {
         }
 
         XCTFail("Condition was not met before timeout", file: file, line: line)
+    }
+
+    private func yieldMainActor(iterations: Int = 5) async {
+        for _ in 0..<iterations {
+            await Task.yield()
+        }
     }
 
     private static func makeRecords() -> [MatchRecord] {
@@ -198,6 +251,7 @@ private final class FakeLiveOddsProvider: LiveOddsProviderProtocol {
         continuation = streamPair.continuation
         streamPair.continuation.onTermination = { [weak self] _ in
             Task { @MainActor [weak self] in
+                self?.continuation = nil
                 self?.terminationCount += 1
             }
         }
@@ -206,5 +260,10 @@ private final class FakeLiveOddsProvider: LiveOddsProviderProtocol {
 
     func send(_ event: LiveOddsEvent) {
         continuation?.yield(event)
+    }
+
+    func finish() {
+        continuation?.finish()
+        continuation = nil
     }
 }

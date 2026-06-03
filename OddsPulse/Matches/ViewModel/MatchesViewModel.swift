@@ -39,10 +39,11 @@ final class MatchesViewModel {
     func start() {
         guard liveOddsTask == nil else { return }
 
-        liveOddsTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-
+        let liveOddsProvider = liveOddsProvider
+        liveOddsTask = Task { @MainActor [weak self, liveOddsProvider] in
             for await event in liveOddsProvider.stream() {
+                guard let self else { break }
+
                 handle(event)
             }
         }
