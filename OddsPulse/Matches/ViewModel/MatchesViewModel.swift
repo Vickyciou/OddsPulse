@@ -4,7 +4,7 @@ import Foundation
 final class MatchesViewModel {
     var onStateChange: ((MatchesViewState) -> Void)?
     var onRowsUpdated: (([MatchRowViewModel], [Int]) -> Void)?
-    var onLiveConnectionStateChange: ((LiveConnectionState) -> Void)?
+    var onFeedStatusChange: ((LiveOddsFeedStatus) -> Void)?
 
     private(set) var state: MatchesViewState = .idle {
         didSet {
@@ -13,76 +13,59 @@ final class MatchesViewModel {
     }
 
     private(set) var displayRows: [MatchRowViewModel] = []
-    private(set) var liveConnectionState: LiveConnectionState = .idle {
+    private(set) var feedStatus: LiveOddsFeedStatus = .idle {
         didSet {
-            onLiveConnectionStateChange?(liveConnectionState)
+            onFeedStatusChange?(feedStatus)
         }
     }
-    private(set) var ignoredOddsUpdateMatchIDs: [Int] = []
 
-    private let matchesService: MatchesServiceProtocol
-    private let oddsService: OddsServiceProtocol
-    private let oddsWebSocketClient: OddsWebSocketClientProtocol
-    private let oddsStore: OddsStore
+    private let liveOddsProvider: LiveOddsProviderProtocol
     private let rowMapper: MatchRowViewModelMapper
-    private let reconnectPolicy: ReconnectPolicy
     private var rowIndexByMatchID: [Int: Int] = [:]
-    private var oddsUpdateTask: Task<Void, Never>?
-    private var isLiveUpdatesStopped = true
-    private var reconnectAttempt = 0
+    private var liveOddsTask: Task<Void, Never>?
 
     init(
-        matchesService: MatchesServiceProtocol? = nil,
-        oddsService: OddsServiceProtocol? = nil,
-        oddsWebSocketClient: OddsWebSocketClientProtocol? = nil,
-        oddsStore: OddsStore = OddsStore(),
-        rowMapper: MatchRowViewModelMapper? = nil,
-        reconnectPolicy: ReconnectPolicy = .default
+        liveOddsProvider: LiveOddsProviderProtocol? = nil,
+        rowMapper: MatchRowViewModelMapper? = nil
     ) {
-        self.matchesService = matchesService ?? MockMatchesService()
-        self.oddsService = oddsService ?? MockOddsService()
-        self.oddsWebSocketClient = oddsWebSocketClient ?? MockOddsWebSocketClient()
-        self.oddsStore = oddsStore
+        self.liveOddsProvider = liveOddsProvider ?? LiveOddsProvider()
         self.rowMapper = rowMapper ?? MatchRowViewModelMapper()
-        self.reconnectPolicy = reconnectPolicy
     }
 
     isolated deinit {
-        stopLiveUpdates()
+        stopObservingLiveOdds()
     }
 
-    func loadInitialMatches() async {
-        state = .loading
+    func start() {
+        guard liveOddsTask == nil else { return }
 
-        let snapshot = await oddsStore.snapshot()
-        if restoreSnapshotIfAvailable(snapshot) {
-            return
+        liveOddsTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            for await event in liveOddsProvider.stream() {
+                handle(event)
+            }
         }
+    }
 
-        do {
-            async let matches = matchesService.fetchMatches()
-            async let odds = oddsService.fetchInitialOdds()
+    func stopObservingLiveOdds() {
+        liveOddsTask?.cancel()
+        liveOddsTask = nil
+    }
 
-            let records = try MatchRecordMapper.makeRecords(
-                matches: try await matches,
-                odds: try await odds
-            )
-            await oddsStore.replaceAll(records)
+    private func handle(_ event: LiveOddsEvent) {
+        switch event {
+        case .loading:
+            state = .loading
+        case let .recordsLoaded(records):
             renderRecords(records)
-            startListeningForOddsUpdates(matchIDs: records.map(\.matchID))
-        } catch is CancellationError {
-            return
-        } catch {
-            state = .failed(message: "Unable to load matches")
+        case let .oddsUpdated(changedRecords):
+            updateRows(from: changedRecords)
+        case let .feedStatusChanged(feedStatus):
+            self.feedStatus = feedStatus
+        case let .initialLoadFailed(message):
+            state = .failed(message: message)
         }
-    }
-
-    private func restoreSnapshotIfAvailable(_ snapshot: OddsSnapshot) -> Bool {
-        guard !snapshot.isEmpty else { return false }
-
-        renderRecords(snapshot.records)
-        startListeningForOddsUpdates(matchIDs: snapshot.records.map(\.matchID))
-        return true
     }
 
     private func renderRecords(_ records: [MatchRecord]) {
@@ -91,105 +74,11 @@ final class MatchesViewModel {
         state = .loaded(rows: displayRows)
     }
 
-    func stopLiveUpdates() {
-        isLiveUpdatesStopped = true
-        oddsUpdateTask?.cancel()
-        oddsUpdateTask = nil
-        oddsWebSocketClient.disconnect()
-        liveConnectionState = .disconnected(message: "Live updates stopped")
-    }
-
-    private func startListeningForOddsUpdates(matchIDs: [Int]) {
-        oddsUpdateTask?.cancel()
-        isLiveUpdatesStopped = false
-        reconnectAttempt = 0
-        liveConnectionState = .connecting
-        let initialEvents = oddsWebSocketClient.connect(matchIDs: matchIDs)
-
-        oddsUpdateTask = Task { @MainActor [weak self] in
-            await self?.runLiveUpdates(
-                matchIDs: matchIDs,
-                initialEvents: initialEvents
-            )
-        }
-    }
-
-    private func runLiveUpdates(
-        matchIDs: [Int],
-        initialEvents: AsyncStream<OddsWebSocketEvent>
-    ) async {
-        var events: AsyncStream<OddsWebSocketEvent>? = initialEvents
-
-        while !Task.isCancelled && !isLiveUpdatesStopped {
-            let currentEvents = events ?? oddsWebSocketClient.connect(matchIDs: matchIDs)
-            events = nil
-
-            for await event in currentEvents {
-                guard !Task.isCancelled else { return }
-                await handleWebSocketEvent(event)
-            }
-
-            guard !Task.isCancelled, !isLiveUpdatesStopped else { return }
-            liveConnectionState = .reconnecting
-            let reconnectDelayNanoseconds = reconnectPolicy.delayNanoseconds(
-                forAttempt: reconnectAttempt
-            )
-            reconnectAttempt += 1
-
-            do {
-                try await Task.sleep(nanoseconds: reconnectDelayNanoseconds)
-            } catch {
-                return
-            }
-        }
-    }
-
-    private func handleWebSocketEvent(_ event: OddsWebSocketEvent) async {
-        switch event {
-        case .connected:
-            reconnectAttempt = 0
-            liveConnectionState = .connected
-        case let .disconnected(reason):
-            handleDisconnect(reason)
-        case let .failed(error):
-            handleWebSocketError(error)
-        case let .oddsUpdated(updates):
-            await handleOddsUpdates(updates)
-        }
-    }
-
-    private func handleDisconnect(_ reason: OddsWebSocketDisconnectReason) {
-        switch reason {
-        case .manual:
-            liveConnectionState = .disconnected(message: "Live updates stopped")
-        case .noMatchIDs:
-            isLiveUpdatesStopped = true
-            liveConnectionState = .disconnected(message: "No matches available for live updates")
-        case .streamEnded:
-            liveConnectionState = .reconnecting
-        }
-    }
-
-    private func handleWebSocketError(_ error: OddsWebSocketError) {
-        switch error {
-        case .connectionFailed:
-            liveConnectionState = .failed(message: "Live updates unavailable")
-        }
-    }
-
-    private func handleOddsUpdates(_ updates: [OddsUpdateDTO]) async {
-        guard !Task.isCancelled else { return }
-
-        let applyResult = await oddsStore.applyOddsUpdates(updates)
-        ignoredOddsUpdateMatchIDs.append(contentsOf: applyResult.ignoredMatchIDs)
-
-        guard !Task.isCancelled else { return }
-
-        let changedRows = rowMapper.makeRows(from: applyResult.changedRecords)
+    private func updateRows(from changedRecords: [MatchRecord]) {
+        let changedRows = rowMapper.makeRows(from: changedRecords)
         var updatedIndexes: [Int] = []
 
         for row in changedRows {
-            guard !Task.isCancelled else { return }
             guard let rowIndex = rowIndexByMatchID[row.matchID] else { continue }
 
             displayRows[rowIndex] = row

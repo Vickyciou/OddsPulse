@@ -11,7 +11,6 @@ final class MatchesViewController: UIViewController {
 
     private let viewModel: MatchesViewModel
     private var rows: [MatchRowViewModel] = []
-    private var loadTask: Task<Void, Never>?
 
     private lazy var tableView = makeTableView()
     private lazy var activityIndicatorView = makeActivityIndicatorView()
@@ -29,8 +28,7 @@ final class MatchesViewController: UIViewController {
     }
 
     isolated deinit {
-        viewModel.stopLiveUpdates()
-        loadTask?.cancel()
+        viewModel.stopObservingLiveOdds()
     }
 
     // MARK: - View Lifecycle
@@ -39,9 +37,7 @@ final class MatchesViewController: UIViewController {
         super.viewDidLoad()
         configureView()
         bindViewModel()
-        loadTask = Task { [viewModel] in
-            await viewModel.loadInitialMatches()
-        }
+        viewModel.start()
     }
 
     // MARK: - Methods
@@ -88,8 +84,8 @@ final class MatchesViewController: UIViewController {
         viewModel.onRowsUpdated = { [weak self] rows, updatedIndexes in
             self?.renderRowUpdates(rows: rows, updatedIndexes: updatedIndexes)
         }
-        viewModel.onLiveConnectionStateChange = { [weak self] state in
-            self?.renderLiveConnectionState(state)
+        viewModel.onFeedStatusChange = { [weak self] feedStatus in
+            self?.renderFeedStatus(feedStatus)
         }
     }
 
@@ -132,24 +128,21 @@ final class MatchesViewController: UIViewController {
         tableView.reloadRows(at: indexPaths, with: .none)
     }
 
-    private func renderLiveConnectionState(_ state: LiveConnectionState) {
-        switch state {
+    private func renderFeedStatus(_ feedStatus: LiveOddsFeedStatus) {
+        switch feedStatus {
         case .idle:
-            connectionStatusLabel.text = "Live updates idle"
+            connectionStatusLabel.text = "Live odds idle"
             connectionStatusLabel.textColor = .secondaryLabel
         case .connecting:
-            connectionStatusLabel.text = "Connecting live updates..."
+            connectionStatusLabel.text = "Connecting odds..."
             connectionStatusLabel.textColor = .secondaryLabel
-        case .connected:
-            connectionStatusLabel.text = "Live updates connected"
+        case .live:
+            connectionStatusLabel.text = "Live"
             connectionStatusLabel.textColor = .systemGreen
         case .reconnecting:
-            connectionStatusLabel.text = "Reconnecting live updates..."
+            connectionStatusLabel.text = "Reconnecting odds..."
             connectionStatusLabel.textColor = .systemOrange
-        case let .disconnected(message):
-            connectionStatusLabel.text = message
-            connectionStatusLabel.textColor = .secondaryLabel
-        case let .failed(message):
+        case let .unavailable(message):
             connectionStatusLabel.text = message
             connectionStatusLabel.textColor = .systemRed
         }
@@ -196,7 +189,7 @@ extension MatchesViewController {
         label.textColor = .secondaryLabel
         label.textAlignment = .left
         label.numberOfLines = 1
-        label.text = "Live updates idle"
+        label.text = "Live odds idle"
         return label
     }
 }
