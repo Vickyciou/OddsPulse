@@ -10,7 +10,6 @@ final class MatchesViewController: UIViewController {
     // MARK: - Properties
 
     private let viewModel: MatchesViewModel
-    private var rows: [MatchRowViewModel] = []
 
     private lazy var tableView = makeTableView()
     private lazy var activityIndicatorView = makeActivityIndicatorView()
@@ -81,8 +80,8 @@ final class MatchesViewController: UIViewController {
         viewModel.onStateChange = { [weak self] state in
             self?.render(state)
         }
-        viewModel.onRowsUpdated = { [weak self] rows, updatedIndexes in
-            self?.renderRowUpdates(rows: rows, updatedIndexes: updatedIndexes)
+        viewModel.onRowIndexesUpdated = { [weak self] updatedRowIndexes in
+            self?.renderRowUpdates(updatedRowIndexes: updatedRowIndexes)
         }
         viewModel.onFeedStatusChange = { [weak self] feedStatus in
             self?.renderFeedStatus(feedStatus)
@@ -92,25 +91,21 @@ final class MatchesViewController: UIViewController {
     private func render(_ state: MatchesViewState) {
         switch state {
         case .idle:
-            rows = []
             activityIndicatorView.stopAnimating()
             messageLabel.isHidden = true
             tableView.isHidden = true
         case .loading:
-            rows = []
             tableView.reloadData()
             tableView.isHidden = true
             messageLabel.isHidden = true
             activityIndicatorView.startAnimating()
         case let .loaded(rows):
-            self.rows = rows
             tableView.reloadData()
             tableView.isHidden = rows.isEmpty
             messageLabel.text = "No matches available"
             messageLabel.isHidden = !rows.isEmpty
             activityIndicatorView.stopAnimating()
         case let .failed(message):
-            rows = []
             tableView.reloadData()
             tableView.isHidden = true
             messageLabel.text = message
@@ -119,12 +114,15 @@ final class MatchesViewController: UIViewController {
         }
     }
 
-    private func renderRowUpdates(rows: [MatchRowViewModel], updatedIndexes: [Int]) {
-        self.rows = rows
-
-        let indexPaths = updatedIndexes.map { rowIndex in
+    private func renderRowUpdates(updatedRowIndexes: [Int]) {
+        let visibleIndexPaths = Set(tableView.indexPathsForVisibleRows ?? [])
+        let indexPaths = updatedRowIndexes.map { rowIndex in
             IndexPath(row: rowIndex, section: 0)
+        }.filter { indexPath in
+            visibleIndexPaths.contains(indexPath)
         }
+        guard !indexPaths.isEmpty else { return }
+
         tableView.reloadRows(at: indexPaths, with: .none)
     }
 
@@ -198,7 +196,7 @@ extension MatchesViewController {
 
 extension MatchesViewController: UITableViewDataSource {
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        rows.count
+        viewModel.rows.count
     }
 
     func tableView(
@@ -212,7 +210,7 @@ extension MatchesViewController: UITableViewDataSource {
             return UITableViewCell()
         }
 
-        cell.configure(with: rows[indexPath.row])
+        cell.configure(with: viewModel.rows[indexPath.row])
         return cell
     }
 }

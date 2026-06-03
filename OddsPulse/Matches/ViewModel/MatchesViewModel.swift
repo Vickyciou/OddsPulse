@@ -2,8 +2,11 @@ import Foundation
 
 @MainActor
 final class MatchesViewModel {
+    private typealias MatchID = Int
+    private typealias RowIndex = Int
+
     var onStateChange: ((MatchesViewState) -> Void)?
-    var onRowsUpdated: (([MatchRowViewModel], [Int]) -> Void)?
+    var onRowIndexesUpdated: (([Int]) -> Void)?
     var onFeedStatusChange: ((LiveOddsFeedStatus) -> Void)?
 
     private(set) var state: MatchesViewState = .idle {
@@ -12,7 +15,7 @@ final class MatchesViewModel {
         }
     }
 
-    private(set) var displayRows: [MatchRowViewModel] = []
+    private(set) var rows: [MatchRowViewModel] = []
     private(set) var feedStatus: LiveOddsFeedStatus = .idle {
         didSet {
             onFeedStatusChange?(feedStatus)
@@ -21,7 +24,7 @@ final class MatchesViewModel {
 
     private let liveOddsProvider: LiveOddsProviderProtocol
     private let rowMapper: MatchRowViewModelMapper
-    private var rowIndexByMatchID: [Int: Int] = [:]
+    private var rowIndexByMatchID: [MatchID: RowIndex] = [:]
     private var liveOddsTask: Task<Void, Never>?
 
     init(
@@ -57,6 +60,7 @@ final class MatchesViewModel {
     private func handle(_ event: LiveOddsEvent) {
         switch event {
         case .loading:
+            clearRows()
             state = .loading
         case let .recordsLoaded(records):
             renderRecords(records)
@@ -65,33 +69,43 @@ final class MatchesViewModel {
         case let .feedStatusChanged(feedStatus):
             self.feedStatus = feedStatus
         case let .initialLoadFailed(message):
+            clearRows()
             state = .failed(message: message)
         }
     }
 
     private func renderRecords(_ records: [MatchRecord]) {
-        displayRows = rowMapper.makeRows(from: records)
-        rowIndexByMatchID = makeRowIndexByMatchID(from: displayRows)
-        state = .loaded(rows: displayRows)
+        let rows = rowMapper.makeRows(from: records)
+        replaceRows(with: rows)
+        state = .loaded(rows: rows)
     }
 
     private func updateRows(from changedRecords: [MatchRecord]) {
         let changedRows = rowMapper.makeRows(from: changedRecords)
-        var updatedIndexes: [Int] = []
+        var updatedRowIndexes: [RowIndex] = []
 
         for row in changedRows {
             guard let rowIndex = rowIndexByMatchID[row.matchID] else { continue }
 
-            displayRows[rowIndex] = row
-            updatedIndexes.append(rowIndex)
+            rows[rowIndex] = row
+            updatedRowIndexes.append(rowIndex)
         }
 
-        guard !updatedIndexes.isEmpty else { return }
+        guard !updatedRowIndexes.isEmpty else { return }
 
-        onRowsUpdated?(displayRows, updatedIndexes)
+        onRowIndexesUpdated?(updatedRowIndexes)
     }
 
-    private func makeRowIndexByMatchID(from rows: [MatchRowViewModel]) -> [Int: Int] {
+    private func replaceRows(with rows: [MatchRowViewModel]) {
+        self.rows = rows
+        rowIndexByMatchID = makeRowIndexByMatchID(from: rows)
+    }
+
+    private func clearRows() {
+        replaceRows(with: [])
+    }
+
+    private func makeRowIndexByMatchID(from rows: [MatchRowViewModel]) -> [MatchID: RowIndex] {
         Dictionary(
             uniqueKeysWithValues: rows.enumerated().map { index, row in
                 (row.matchID, index)
