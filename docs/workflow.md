@@ -37,6 +37,18 @@ xcodebuild test -project OddsPulse.xcodeproj -scheme OddsPulse -destination 'pla
 
 若本機 simulator 名稱不同，先用 `xcrun simctl list devices available` 查詢可用裝置。
 
+## Current Verification Coverage
+
+| Test file | 覆蓋範圍 |
+|:---|:---|
+| `MatchRecordMapperTests.swift` | start time 排序、缺少 odds、未知 odds、invalid start time |
+| `MatchRowViewModelMapperTests.swift` | unavailable odds 顯示 |
+| `OddsStoreTests.swift` | known/unknown odds updates、replace all、snapshot |
+| `MockOddsWebSocketClientTests.swift` | batch match IDs、empty IDs、connected event、disconnect finishes stream |
+| `LiveOddsProviderTests.swift` | initial load、cached snapshot、unknown update、subscriber cancellation、reconnect max attempts |
+| `MatchesViewModelTests.swift` | loading、loaded、failed、row update、feed status、stream cancellation |
+| `ReconnectPolicyTests.swift` | delay cap 與 retry limit |
+
 ## Verification Notes
 
 - 即時 odds update 應能看出 cell 局部更新。

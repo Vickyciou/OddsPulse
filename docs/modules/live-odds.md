@@ -1,0 +1,116 @@
+# Live Odds Module
+
+本文件記錄 OddsPulse live odds data pipeline 的現況，包含初始資料載入、mock WebSocket、thread-safe store、subscriber lifecycle 與 reconnect。
+
+## Module Scope
+
+| 類別 | 主要型別 | 職責 |
+|:---|:---|:---|
+| Provider | `LiveOddsProvider`、`LiveOddsProviderProtocol` | odds 資料單一入口，管理 initial load、live feed、cache、subscriber count 與 reconnect |
+| REST mock | `MockMatchesService`、`MockOddsService` | 從 bundled JSON fixtures 讀取 matches 與 initial odds |
+| WebSocket mock | `MockOddsWebSocketClient`、`OddsWebSocketEvent` | 使用 `Timer` 模擬 live odds batch updates |
+| Store | `OddsStore` | actor-isolated canonical match/odds state |
+| Policy | `ReconnectPolicy` | reconnect delay、jitter 與 retry limit |
+
+## Public Interface
+
+`LiveOddsProviderProtocol` 是 ViewModel 使用的資料入口。現況為 main-actor isolated protocol，並要求 conforming provider 可安全跨 concurrency boundary 持有。
+
+```swift
+@MainActor
+protocol LiveOddsProviderProtocol: Sendable {
+    func stream() -> AsyncStream<LiveOddsEvent>
+}
+```
+
+`LiveOddsEvent` 是 provider 對 ViewModel 的事件契約：
+
+| Event | 語意 |
+|:---|:---|
+| `.loading` | snapshot 為空，開始 initial load |
+| `.recordsLoaded([MatchRecord])` | 初始資料或 cached snapshot 可呈現 |
+| `.oddsUpdated(changedRecords:)` | 已知 match 的 odds 有異動 |
+| `.feedStatusChanged(LiveOddsFeedStatus)` | live feed 連線狀態改變 |
+| `.initialLoadFailed(message:)` | 初始 matches/odds 載入失敗 |
+
+## Initial Load Flow
+
+```text
+subscriber calls stream()
+  -> LiveOddsProvider creates AsyncStream continuation
+  -> OddsStore.snapshot()
+      -> if snapshot exists: emit recordsLoaded(snapshot.records)
+      -> if empty: emit loading
+          -> async let matchesService.fetchMatches()
+          -> async let oddsService.fetchInitialOdds()
+          -> MatchRecordMapper.makeRecords(matches:odds:)
+          -> OddsStore.replaceAll(records)
+          -> emit recordsLoaded(records)
+          -> start live updates
+```
+
+`MockMatchesService` 與 `MockOddsService` 皆使用 `Task.sleep` 模擬延遲，再透過 `BundleResourceLoader` 讀取 `Resources/MockData/` 下的 JSON fixture。
+
+## Live Update Flow
+
+```text
+LiveOddsProvider.startLiveUpdatesIfNeeded(matchIDs:)
+  -> MockOddsWebSocketClient.connect(matchIDs:)
+      -> yields .connected
+      -> Timer repeats every second
+      -> yields .oddsUpdated([OddsUpdateDTO])
+  -> LiveOddsProvider.handleOddsUpdates(_:)
+      -> OddsStore.applyOddsUpdates(_:)
+      -> emit oddsUpdated(changedRecords:) when known records changed
+```
+
+`MockOddsWebSocketClient` 目前：
+
+| 行為 | 現況 |
+|:---|:---|
+| Scheduler | `Timer` 加到 main run loop 的 `.common` mode |
+| Batch size | 每批 1 到 10 筆，受輸入 matchIDs 數量限制 |
+| Match IDs | 從 `connect(matchIDs:)` 傳入的 IDs 中抽樣 |
+| Empty IDs | yield `.disconnected(reason: .noMatchIDs)` 後 finish stream |
+| Disconnect | invalidate timer、清空 connected IDs、finish continuation |
+
+## Cache And Subscriber Lifecycle
+
+`SceneDependencies` 持有 shared `LiveOddsProviderProtocol`，使同一個 scene/session 內建立的新 `MatchesViewModel` 可共用 provider。
+
+```text
+SceneDependencies.liveOddsProvider
+  -> LiveOddsProvider
+      -> OddsStore actor
+          -> records snapshot
+```
+
+Subscriber lifecycle：
+
+1. 每次 `stream()` 建立一個 subscriber ID 與 continuation。
+2. continuation termination 會移除 subscriber。
+3. subscriber count 歸零時，provider 取消 initial load task、停止 live updates 並呼叫 `disconnect()`。
+4. provider deinit 時會停止 live updates、取消 initial load task 並 finish 所有 continuation。
+
+## Reconnect Behavior
+
+`LiveOddsProvider` 對 unexpected stream end 套用 `ReconnectPolicy`。
+
+| 狀態 | 行為 |
+|:---|:---|
+| `.connected` | reconnect attempt reset 為 0，emit `.live` |
+| `.disconnected(.manual)` | 停止 live update loop |
+| `.disconnected(.noMatchIDs)` | emit unavailable message，停止 loop |
+| `.disconnected(.streamEnded)` | 依 `ReconnectPolicy` 決定是否重連 |
+| `.failed` | emit unavailable message，停止 loop |
+
+`ReconnectPolicy.default` 目前設定 initial delay 1 秒、max delay 8 秒、jitter 250ms、max attempts 5。
+
+## Tests
+
+| Test file | 覆蓋範圍 |
+|:---|:---|
+| `LiveOddsProviderTests.swift` | initial load、cached snapshot、unknown update、stream cancellation、reconnect max attempts |
+| `MockOddsWebSocketClientTests.swift` | batch IDs、empty IDs、connected event、disconnect finishes stream |
+| `OddsStoreTests.swift` | known/unknown odds updates、replace all、snapshot |
+| `ReconnectPolicyTests.swift` | exponential delay cap、retry limit |

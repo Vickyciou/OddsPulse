@@ -2,6 +2,8 @@
 
 本文件記錄 OddsPulse 的架構方向、資料流與 thread-safe 設計原則。
 
+模組細節請搭配 [`modules/live-odds.md`](modules/live-odds.md) 與 [`modules/matches-ui.md`](modules/matches-ui.md) 閱讀。
+
 ## Current Baseline
 
 OddsPulse 使用 UIKit programmatic UI 與 MVVM。REST mock、WebSocket mock、thread-safe cache 與 reconnect 策略集中在 `LiveOddsProvider`，ViewModel 只消費 provider event 並轉成畫面狀態。
@@ -39,6 +41,7 @@ ReconnectPolicy
 `LiveOddsProvider` 是 odds 資料的單一入口。ViewModel 不直接打 API、不直接 connect WebSocket，也不直接讀寫 `OddsStore`。
 
 ```swift
+@MainActor
 protocol LiveOddsProviderProtocol: Sendable {
     func stream() -> AsyncStream<LiveOddsEvent>
 }
@@ -146,6 +149,18 @@ Live odds updates 由 `MockOddsWebSocketClient` 產生，client 持有 `Timer` �
 - actor 用於保護共享 mutable state。
 - 長生命週期 task、timer 或 stream 需有明確停止機制；ViewModel 釋放時需 cancel observation task，Provider 無 subscriber 時需 disconnect WebSocket client。
 - 修改 concurrency 相關程式碼時，使用 `swift-concurrency-pro` 做檢查。
+
+## Build Concurrency Settings
+
+| Target | 設定 | 現況 |
+|:---|:---|:---|
+| App target | `SWIFT_VERSION` | `5.0` |
+| App target | `SWIFT_APPROACHABLE_CONCURRENCY` | `YES` |
+| App target | `SWIFT_DEFAULT_ACTOR_ISOLATION` | `MainActor` |
+| Test targets | `SWIFT_VERSION` | `5.0` |
+| Test targets | `SWIFT_APPROACHABLE_CONCURRENCY` | `YES` |
+
+目前 app target 大量 UI 與 provider-facing code 受 main actor isolation 影響；若切換到 Swift 6 或調整 actor isolation，需同步檢查 `LiveOddsProviderProtocol`、`MatchesViewModel`、fake providers 與 `OddsWebSocketClientProtocol` 的呼叫邊界。
 
 ## Testing Strategy
 

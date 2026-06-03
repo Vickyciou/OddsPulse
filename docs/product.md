@@ -63,7 +63,7 @@ OddsPulse 是即時賽事賠率系統。App 需展示約 100 筆比賽資料，�
 
 | 交付項目 | 狀態 |
 |:---|:---|
-| Source code | 待實作 |
-| 架構說明 | 待補，需涵蓋 Swift Concurrency 使用場景、thread-safe 設計、UI/ViewModel binding |
-| 操作影片 | 可選 |
-| Unit tests | 建議提供 |
+| Source code | 已實作：programmatic app root、mock REST、mock WebSocket、thread-safe store、row-level update、reconnect 與 scene/session cache |
+| 架構說明 | 已補於 [`architecture.md`](architecture.md)，模組細節見 [`modules/live-odds.md`](modules/live-odds.md) 與 [`modules/matches-ui.md`](modules/matches-ui.md) |
+| 操作影片 | 可選，目前未納入 codebase 文件紀錄 |
+| Unit tests | 已提供 XCTest，覆蓋 mapping、store、WebSocket、provider、ViewModel 與 reconnect policy |
