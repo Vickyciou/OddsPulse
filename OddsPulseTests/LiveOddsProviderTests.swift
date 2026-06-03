@@ -82,14 +82,33 @@ final class LiveOddsProviderTests: XCTestCase {
         await waitUntil {
             eventRecorder.events.contains(.feedStatusChanged(.live))
         }
-        let eventCountBeforeUnknownUpdate = eventRecorder.events.count
         webSocketClient.send([
             OddsUpdateDTO(matchID: 9999, teamAOdds: 1.88, teamBOdds: 2.05)
         ])
-        await Task.yield()
+        webSocketClient.send([
+            OddsUpdateDTO(matchID: 1001, teamAOdds: 2.45, teamBOdds: 1.65)
+        ])
+        await waitUntil {
+            eventRecorder.events.contains { event in
+                guard case let .oddsUpdated(changedRecords) = event else {
+                    return false
+                }
+
+                return changedRecords.map(\.matchID) == [1001]
+            }
+        }
         collectionTask.cancel()
 
-        XCTAssertEqual(eventRecorder.events.count, eventCountBeforeUnknownUpdate)
+        let oddsUpdatedEvents = eventRecorder.events.compactMap { event -> [MatchRecord]? in
+            guard case let .oddsUpdated(changedRecords) = event else {
+                return nil
+            }
+
+            return changedRecords
+        }
+
+        XCTAssertEqual(oddsUpdatedEvents.count, 1)
+        XCTAssertEqual(oddsUpdatedEvents.first?.map(\.matchID), [1001])
     }
 
     func testStreamCancellationDisconnectsWebSocket() async {

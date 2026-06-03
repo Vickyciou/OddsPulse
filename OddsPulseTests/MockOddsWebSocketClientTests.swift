@@ -23,24 +23,28 @@ final class MockOddsWebSocketClientTests: XCTestCase {
         XCTAssertEqual(client.makeUpdateBatch(matchIDs: []), [])
     }
 
-    func testConnectPublishesOddsUpdatesToStream() async {
+    func testConnectPublishesConnectedEventWhenMatchIDsAreProvided() async {
         let client = MockOddsWebSocketClient()
         let matchIDs = [1001, 1002, 1003]
         let events = client.connect(matchIDs: matchIDs)
         var iterator = events.makeAsyncIterator()
 
-        _ = await iterator.next()
         let event = await iterator.next()
         client.disconnect()
 
-        guard case let .oddsUpdated(batch) = event else {
-            XCTFail("Expected odds update event")
-            return
-        }
+        XCTAssertEqual(event, .connected)
+    }
 
-        let batchMatchIDs = batch.map(\.matchID)
-        XCTAssertFalse(batchMatchIDs.isEmpty)
-        XCTAssertTrue(batchMatchIDs.allSatisfy { matchIDs.contains($0) })
+    func testConnectFinishesStreamWhenMatchIDsAreEmpty() async {
+        let client = MockOddsWebSocketClient()
+        let events = client.connect(matchIDs: [])
+        var iterator = events.makeAsyncIterator()
+
+        let event = await iterator.next()
+        let nextEvent = await iterator.next()
+
+        XCTAssertEqual(event, .disconnected(reason: .noMatchIDs))
+        XCTAssertNil(nextEvent)
     }
 
     func testDisconnectFinishesOddsUpdatesStream() async {
