@@ -323,7 +323,8 @@ private extension ReconnectPolicy {
     static let zeroDelay = ReconnectPolicy(
         initialDelayNanoseconds: 0,
         maxDelayNanoseconds: 0,
-        jitterRangeNanoseconds: 0
+        jitterRangeNanoseconds: 0,
+        maxAttempts: 5
     )
 }
 
