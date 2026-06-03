@@ -10,13 +10,16 @@ import UIKit
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     var window: UIWindow?
+    private let dependencies = SceneDependencies()
 
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let windowScene = scene as? UIWindowScene else { return }
 
         let window = UIWindow(windowScene: windowScene)
-        let viewModel = MatchesViewModel()
+        let viewModel = MatchesViewModel(
+            liveOddsProvider: dependencies.liveOddsProvider
+        )
         window.backgroundColor = .systemBackground
         window.rootViewController = UINavigationController(
             rootViewController: MatchesViewController(viewModel: viewModel)
