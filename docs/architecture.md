@@ -66,8 +66,8 @@ enum LiveOddsFeedStatus: Equatable {
 ## Data Merge And Update Flow
 
 1. ViewModel 訂閱 `LiveOddsProvider.stream()`。
-2. Provider 先讀 `OddsStore.snapshot()`；若 snapshot 不空，立即 emit `.recordsLoaded(snapshot.records)`。
-3. snapshot 為空時，Provider emit `.loading`，並平行請求 mock `/matches` 與 mock `/odds`。
+2. Provider 先讀 `OddsStore.snapshot()`；若 snapshot 不空，立即 emit `.recordsLoaded(snapshot.records)` 讓 UI 先呈現 cached data。
+3. Provider 不論 snapshot 是否存在，都會平行請求 mock `/matches` 與 mock `/odds`；只有 snapshot 為空時才先 emit `.loading`。
 4. `MatchRecordMapper` 使用 `matchID` 將比賽基本資料與初始賠率合併，依 `startTime` 升序排序；時間相同時用 `matchID` 作 deterministic tie-breaker。
 5. Provider 將 records 寫入 `OddsStore`，再 emit `.recordsLoaded(records)`。
 6. Provider 啟動 `MockOddsWebSocketClient`，並 emit feed status。

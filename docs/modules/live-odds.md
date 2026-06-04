@@ -41,12 +41,12 @@ subscriber calls stream()
   -> OddsStore.snapshot()
       -> if snapshot exists: emit recordsLoaded(snapshot.records)
       -> if empty: emit loading
-          -> async let matchesService.fetchMatches()
-          -> async let oddsService.fetchInitialOdds()
-          -> MatchRecordMapper.makeRecords(matches:odds:)
-          -> OddsStore.replaceRecords(records)
-          -> emit recordsLoaded(records)
-          -> start live updates
+      -> async let matchesService.fetchMatches()
+      -> async let oddsService.fetchInitialOdds()
+      -> MatchRecordMapper.makeRecords(matches:odds:)
+      -> OddsStore.replaceRecords(records)
+      -> emit recordsLoaded(records)
+      -> start live updates
 ```
 
 `MockMatchesService` 與 `MockOddsService` 皆使用 `Task.sleep` 模擬延遲，再透過 `BundleResourceLoader` 讀取 `Resources/MockData/` 下的 JSON fixture。

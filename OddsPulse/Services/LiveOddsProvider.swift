@@ -79,10 +79,10 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
         if !snapshot.isEmpty {
             send(.recordsLoaded(snapshot.records), to: subscriberID)
             startLiveUpdatesIfNeeded(matchIDs: snapshot.records.map(\.matchID))
-            return
+        } else {
+            send(.loading, to: subscriberID)
         }
 
-        send(.loading, to: subscriberID)
         startInitialLoadIfNeeded()
     }
 
