@@ -107,7 +107,7 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
                 matches: try await matches,
                 odds: try await odds
             )
-            await oddsStore.replaceAll(records)
+            await oddsStore.replaceRecords(records)
             broadcast(.recordsLoaded(records))
             startLiveUpdatesIfNeeded(matchIDs: records.map(\.matchID))
         } catch is CancellationError {

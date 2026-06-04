@@ -4,7 +4,7 @@ actor OddsStore {
     private var records: [MatchRecord] = []
     private var indexByMatchID: [Int: Int] = [:]
 
-    func replaceAll(_ records: [MatchRecord]) {
+    func replaceRecords(_ records: [MatchRecord]) {
         self.records = records
         indexByMatchID = Dictionary(
             uniqueKeysWithValues: records.enumerated().map { index, record in
@@ -13,21 +13,17 @@ actor OddsStore {
         )
     }
 
-    func allRecords() -> [MatchRecord] {
-        records
+    func snapshot() -> Snapshot {
+        Snapshot(records: records)
     }
 
-    func snapshot() -> OddsSnapshot {
-        OddsSnapshot(records: records)
-    }
-
-    func applyOddsUpdates(_ updates: [OddsUpdateDTO]) -> OddsUpdateApplyResult {
+    func applyOddsUpdates(_ updates: [OddsUpdateDTO]) -> UpdateResult {
         var changedRecords: [MatchRecord] = []
-        var ignoredMatchIDs: [Int] = []
+        var unknownMatchIDs: [Int] = []
 
         for update in updates {
             guard let index = indexByMatchID[update.matchID] else {
-                ignoredMatchIDs.append(update.matchID)
+                unknownMatchIDs.append(update.matchID)
                 continue
             }
 
@@ -38,22 +34,24 @@ actor OddsStore {
             changedRecords.append(records[index])
         }
 
-        return OddsUpdateApplyResult(
+        return UpdateResult(
             changedRecords: changedRecords,
-            ignoredMatchIDs: ignoredMatchIDs
+            unknownMatchIDs: unknownMatchIDs
         )
     }
 }
 
-struct OddsUpdateApplyResult: Equatable {
-    let changedRecords: [MatchRecord]
-    let ignoredMatchIDs: [Int]
-}
+extension OddsStore {
+    struct UpdateResult: Equatable {
+        let changedRecords: [MatchRecord]
+        let unknownMatchIDs: [Int]
+    }
 
-struct OddsSnapshot: Equatable {
-    let records: [MatchRecord]
+    struct Snapshot: Equatable {
+        let records: [MatchRecord]
 
-    var isEmpty: Bool {
-        records.isEmpty
+        var isEmpty: Bool {
+            records.isEmpty
+        }
     }
 }

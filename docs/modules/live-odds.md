@@ -44,7 +44,7 @@ subscriber calls stream()
           -> async let matchesService.fetchMatches()
           -> async let oddsService.fetchInitialOdds()
           -> MatchRecordMapper.makeRecords(matches:odds:)
-          -> OddsStore.replaceAll(records)
+          -> OddsStore.replaceRecords(records)
           -> emit recordsLoaded(records)
           -> start live updates
 ```
