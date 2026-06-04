@@ -104,7 +104,7 @@ enum LiveOddsFeedStatus: Equatable {
 | ViewModel | 訂閱 `LiveOddsProvider`、管理畫面狀態、維護 `displayRows` 與 `matchID -> row index`，將 provider event 轉成 row update |
 | LiveOddsProvider | 統一資料來源，管理 snapshot、initial API load、WebSocket lifecycle、subscriber count 與 reconnect |
 | Service / WebSocket Client | 模擬 `/matches`、`/odds` 與 WebSocket odds update |
-| Store / Actor | 保護共享 match/odds state，確保 thread-safe，提供 snapshot 並套用 partial odds updates |
+| OddsStoreProtocol / OddsStore actor | 保護共享 match/odds state，確保 thread-safe，提供 snapshot 並套用 partial odds updates。`LiveOddsProvider` 依賴 protocol，便於單元測試注入 fake |
 | Models | 定義 API/mock model、domain model 與 UI display model |
 
 ## State Ownership

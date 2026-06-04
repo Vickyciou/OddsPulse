@@ -1,6 +1,25 @@
 import Foundation
 
-actor OddsStore {
+struct Snapshot: Equatable {
+    let records: [MatchRecord]
+
+    var isEmpty: Bool {
+        records.isEmpty
+    }
+}
+
+struct UpdateResult: Equatable {
+    let changedRecords: [MatchRecord]
+    let unknownMatchIDs: [Int]
+}
+
+protocol OddsStoreProtocol: AnyObject {
+    func replaceRecords(_ records: [MatchRecord]) async
+    func snapshot() async -> Snapshot
+    func applyOddsUpdates(_ updates: [OddsUpdateDTO]) async -> UpdateResult
+}
+
+actor OddsStore: OddsStoreProtocol {
     private var records: [MatchRecord] = []
     private var indexByMatchID: [Int: Int] = [:]
 
@@ -38,20 +57,5 @@ actor OddsStore {
             changedRecords: changedRecords,
             unknownMatchIDs: unknownMatchIDs
         )
-    }
-}
-
-extension OddsStore {
-    struct UpdateResult: Equatable {
-        let changedRecords: [MatchRecord]
-        let unknownMatchIDs: [Int]
-    }
-
-    struct Snapshot: Equatable {
-        let records: [MatchRecord]
-
-        var isEmpty: Bool {
-            records.isEmpty
-        }
     }
 }

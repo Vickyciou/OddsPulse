@@ -26,7 +26,7 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
     private let matchesService: MatchesServiceProtocol
     private let oddsService: OddsServiceProtocol
     private let oddsWebSocketClient: OddsWebSocketClientProtocol
-    private let oddsStore: OddsStore
+    private let oddsStore: OddsStoreProtocol
     private let reconnectPolicy: ReconnectPolicy
 
     private var eventContinuations: [UUID: AsyncStream<LiveOddsEvent>.Continuation] = [:]
@@ -38,13 +38,13 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
         matchesService: MatchesServiceProtocol? = nil,
         oddsService: OddsServiceProtocol? = nil,
         oddsWebSocketClient: OddsWebSocketClientProtocol? = nil,
-        oddsStore: OddsStore = OddsStore(),
+        oddsStore: OddsStoreProtocol? = nil,
         reconnectPolicy: ReconnectPolicy = .default
     ) {
         self.matchesService = matchesService ?? MockMatchesService()
         self.oddsService = oddsService ?? MockOddsService()
         self.oddsWebSocketClient = oddsWebSocketClient ?? MockOddsWebSocketClient()
-        self.oddsStore = oddsStore
+        self.oddsStore = oddsStore ?? OddsStore()
         self.reconnectPolicy = reconnectPolicy
     }
 

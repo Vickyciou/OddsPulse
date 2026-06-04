@@ -3,135 +3,215 @@ import XCTest
 
 @MainActor
 final class LiveOddsProviderTests: XCTestCase {
-    func testStreamLoadsInitialRecordsAndStartsLiveFeed() async {
-        let webSocketClient = FakeLiveOddsWebSocketClient()
-        let provider = makeProvider(oddsWebSocketClient: webSocketClient)
-        let eventRecorder = EventRecorder()
-        let collectionTask = collectEvents(from: provider, into: eventRecorder)
-
-        await waitUntil {
-            eventRecorder.events.contains(.feedStatusChanged(.live))
-        }
-        collectionTask.cancel()
-
-        XCTAssertEqual(eventRecorder.events.first, .loading)
-        XCTAssertTrue(eventRecorder.events.contains(.feedStatusChanged(.connecting)))
-        XCTAssertTrue(eventRecorder.events.contains(.feedStatusChanged(.live)))
-        XCTAssertEqual(webSocketClient.connectedMatchIDs, [1001, 1002])
-
-        guard case let .recordsLoaded(records) = eventRecorder.events.first(where: { event in
-            if case .recordsLoaded = event { return true }
-            return false
-        }) else {
-            XCTFail("Expected recordsLoaded event")
-            return
-        }
-
-        XCTAssertEqual(records.map(\.matchID), [1001, 1002])
-    }
-
-    func testNewSubscriberReceivesCachedRecordsWithLatestOdds() async {
-        let webSocketClient = FakeLiveOddsWebSocketClient()
-        let provider = makeProvider(oddsWebSocketClient: webSocketClient)
-        let firstEventRecorder = EventRecorder()
-        let firstCollectionTask = collectEvents(from: provider, into: firstEventRecorder)
-
-        await waitUntil {
-            firstEventRecorder.events.contains(.feedStatusChanged(.live))
-        }
-        webSocketClient.send([
-            OddsUpdateDTO(matchID: 1001, teamAOdds: 2.45, teamBOdds: 1.65)
+    func testFirstSubscriberReceivesInitialLoadAndLiveConnectionEvents() async throws {
+        // 準備
+        let matchesService = FakeMatchesService(matches: [
+            makeMatch(matchID: 1002, startTime: "2026-01-02T12:00:00Z"),
+            makeMatch(matchID: 1001, startTime: "2026-01-01T12:00:00Z")
         ])
-        await waitUntil {
-            firstEventRecorder.events.contains { event in
-                guard case let .oddsUpdated(changedRecords) = event else { return false }
-                return changedRecords.first?.matchID == 1001
-            }
-        }
-
-        let secondEventRecorder = EventRecorder()
-        let secondCollectionTask = collectEvents(from: provider, into: secondEventRecorder)
-
-        await waitUntil {
-            secondEventRecorder.events.contains { event in
-                guard case .recordsLoaded = event else { return false }
-                return true
-            }
-        }
-        firstCollectionTask.cancel()
-        secondCollectionTask.cancel()
-
-        guard case let .recordsLoaded(records) = secondEventRecorder.events.first else {
-            XCTFail("Expected cached records as first event")
-            return
-        }
-
-        let restoredRecord = records.first { $0.matchID == 1001 }
-        XCTAssertEqual(
-            restoredRecord?.oddsState,
-            .available(teamAOdds: 2.45, teamBOdds: 1.65)
-        )
-    }
-
-    func testUnknownOddsUpdateDoesNotEmitOddsUpdated() async {
-        let webSocketClient = FakeLiveOddsWebSocketClient()
-        let provider = makeProvider(oddsWebSocketClient: webSocketClient)
-        let eventRecorder = EventRecorder()
-        let collectionTask = collectEvents(from: provider, into: eventRecorder)
-
-        await waitUntil {
-            eventRecorder.events.contains(.feedStatusChanged(.live))
-        }
-        webSocketClient.send([
-            OddsUpdateDTO(matchID: 9999, teamAOdds: 1.88, teamBOdds: 2.05)
+        let oddsService = FakeOddsService(odds: [
+            makeOdds(matchID: 1001, teamAOdds: 1.50, teamBOdds: 2.50),
+            makeOdds(matchID: 1002, teamAOdds: 1.80, teamBOdds: 2.10)
         ])
-        webSocketClient.send([
-            OddsUpdateDTO(matchID: 1001, teamAOdds: 2.45, teamBOdds: 1.65)
-        ])
-        await waitUntil {
-            eventRecorder.events.contains { event in
-                guard case let .oddsUpdated(changedRecords) = event else {
-                    return false
-                }
-
-                return changedRecords.map(\.matchID) == [1001]
-            }
-        }
-        collectionTask.cancel()
-
-        let oddsUpdatedEvents = eventRecorder.events.compactMap { event -> [MatchRecord]? in
-            guard case let .oddsUpdated(changedRecords) = event else {
-                return nil
-            }
-
-            return changedRecords
-        }
-
-        XCTAssertEqual(oddsUpdatedEvents.count, 1)
-        XCTAssertEqual(oddsUpdatedEvents.first?.map(\.matchID), [1001])
-    }
-
-    func testStreamCancellationDisconnectsWebSocket() async {
-        let webSocketClient = FakeLiveOddsWebSocketClient()
-        let provider = makeProvider(oddsWebSocketClient: webSocketClient)
-        let eventRecorder = EventRecorder()
-        let collectionTask = collectEvents(from: provider, into: eventRecorder)
-
-        await waitUntil {
-            eventRecorder.events.contains(.feedStatusChanged(.live))
-        }
-        collectionTask.cancel()
-        await waitUntil {
-            webSocketClient.disconnectCallCount == 1
-        }
-
-        XCTAssertEqual(webSocketClient.disconnectCallCount, 1)
-    }
-
-    func testReconnectStopsAfterMaxAttempts() async {
-        let webSocketClient = FakeLiveOddsWebSocketClient(connectBehavior: .finishImmediately)
+        let store = FakeOddsStore()
+        let webSocketClient = ControllableOddsWebSocketClient()
         let provider = makeProvider(
-            oddsWebSocketClient: webSocketClient,
+            matchesService: matchesService,
+            oddsService: oddsService,
+            webSocketClient: webSocketClient,
+            store: store
+        )
+        let eventCollector = LiveOddsEventCollector(stream: provider.stream())
+
+        // 執行
+        let initialEvents = try await eventCollector.collectNextEvents(count: 3, in: self)
+        webSocketClient.send(.connected)
+        let liveEvents = try await eventCollector.collectNextEvents(count: 1, in: self)
+        let matchesFetchCount = await matchesService.fetchCallCount()
+        let oddsFetchCount = await oddsService.fetchCallCount()
+
+        // 驗證
+        guard case let .recordsLoaded(loadedRecords) = initialEvents[1] else {
+            return XCTFail("Expected recordsLoaded event")
+        }
+
+        XCTAssertEqual(initialEvents[0], .loading)
+        XCTAssertEqual(loadedRecords.map(\.matchID), [1001, 1002])
+        XCTAssertEqual(initialEvents[2], .feedStatusChanged(.connecting))
+        XCTAssertEqual(liveEvents, [.feedStatusChanged(.live)])
+        XCTAssertEqual(matchesFetchCount, 1)
+        XCTAssertEqual(oddsFetchCount, 1)
+        XCTAssertEqual(webSocketClient.connectCallCount, 1)
+        XCTAssertEqual(webSocketClient.connectedMatchIDsHistory, [[1001, 1002]])
+        XCTAssertEqual(store.replaceRecordsCallCount, 1)
+        XCTAssertEqual(store.lastReplacedRecords.map(\.matchID), [1001, 1002])
+    }
+
+    func testInitialLoadFailureDoesNotConnectWebSocket() async throws {
+        // 準備
+        let matchesService = FakeMatchesService(result: .failure(TestError.expected))
+        let webSocketClient = ControllableOddsWebSocketClient()
+        let provider = makeProvider(
+            matchesService: matchesService,
+            webSocketClient: webSocketClient
+        )
+
+        // 執行
+        let events = try await collectEvents(from: provider.stream(), count: 2)
+
+        // 驗證
+        XCTAssertEqual(events, [
+            .loading,
+            .initialLoadFailed(message: "Unable to load matches")
+        ])
+        XCTAssertEqual(webSocketClient.connectCallCount, 0)
+    }
+
+    func testMappingFailureDoesNotConnectWebSocket() async throws {
+        // 準備
+        let matchesService = FakeMatchesService(matches: [
+            makeMatch(matchID: 1001, startTime: "not-a-date")
+        ])
+        let webSocketClient = ControllableOddsWebSocketClient()
+        let provider = makeProvider(
+            matchesService: matchesService,
+            webSocketClient: webSocketClient
+        )
+
+        // 執行
+        let events = try await collectEvents(from: provider.stream(), count: 2)
+
+        // 驗證
+        XCTAssertEqual(events, [
+            .loading,
+            .initialLoadFailed(message: "Unable to load matches")
+        ])
+        XCTAssertEqual(webSocketClient.connectCallCount, 0)
+    }
+
+    func testCachedSnapshotSubscriberReceivesSnapshotThenRefreshesRecords() async throws {
+        // 準備
+        let store = FakeOddsStore()
+        store.snapshotOverride = Snapshot(records: [
+            makeRecord(matchID: 1001),
+            makeRecord(matchID: 1002)
+        ])
+        let matchesService = FakeMatchesService(matches: [
+            makeMatch(matchID: 9999)
+        ])
+        let oddsService = FakeOddsService(odds: [
+            makeOdds(matchID: 9999)
+        ])
+        let webSocketClient = ControllableOddsWebSocketClient()
+        let provider = makeProvider(
+            matchesService: matchesService,
+            oddsService: oddsService,
+            webSocketClient: webSocketClient,
+            store: store
+        )
+
+        // 執行
+        let events = try await collectEvents(from: provider.stream(), count: 3)
+
+        // 驗證
+        guard case let .recordsLoaded(snapshotRecords) = events[0] else {
+            return XCTFail("Expected cached recordsLoaded event")
+        }
+
+        guard case let .recordsLoaded(refreshedRecords) = events[2] else {
+            return XCTFail("Expected refreshed recordsLoaded event")
+        }
+
+        XCTAssertEqual(snapshotRecords.map(\.matchID), [1001, 1002])
+        XCTAssertEqual(events[1], .feedStatusChanged(.connecting))
+        XCTAssertEqual(refreshedRecords.map(\.matchID), [9999])
+        XCTAssertEqual(webSocketClient.connectedMatchIDsHistory, [[1001, 1002]])
+    }
+
+    func testOddsUpdateBroadcastsOnlyChangedKnownRecords() async throws {
+        // 準備
+        let provider = makeProviderWithLoadedRecords(matchIDs: [1001, 1002])
+        let eventCollector = LiveOddsEventCollector(stream: provider.provider.stream())
+        _ = try await eventCollector.collectNextEvents(count: 3, in: self)
+
+        // 執行
+        provider.webSocketClient.send(.oddsUpdated([
+            OddsUpdateDTO(matchID: 1002, teamAOdds: 1.88, teamBOdds: 2.05),
+            OddsUpdateDTO(matchID: 9999, teamAOdds: 4.00, teamBOdds: 5.00)
+        ]))
+        let events = try await eventCollector.collectNextEvents(count: 1, in: self)
+
+        // 驗證
+        guard let event = events.first,
+              case let .oddsUpdated(changedRecords) = event else {
+            return XCTFail("Expected oddsUpdated event")
+        }
+
+        XCTAssertEqual(changedRecords.map(\.matchID), [1002])
+        XCTAssertEqual(
+            changedRecords.first?.oddsState,
+            .available(teamAOdds: 1.88, teamBOdds: 2.05)
+        )
+        XCTAssertEqual(provider.store.applyOddsUpdatesCallCount, 1)
+        XCTAssertEqual(provider.store.lastAppliedUpdates.map(\.matchID), [1002, 9999])
+    }
+
+    func testManualDisconnectStopsWithoutReconnectOrUnavailableEvent() async throws {
+        // 準備
+        let provider = makeProviderWithLoadedRecords(matchIDs: [1001])
+        let eventCollector = LiveOddsEventCollector(stream: provider.provider.stream())
+        _ = try await eventCollector.collectNextEvents(count: 3, in: self)
+
+        // 執行
+        provider.webSocketClient.send(.disconnected(reason: .manual))
+
+        // 驗證
+        await eventCollector.assertNoEvent(in: self)
+        XCTAssertEqual(provider.webSocketClient.connectCallCount, 1)
+    }
+
+    func testNoMatchIDsDisconnectBroadcastsUnavailableAndDoesNotReconnect() async throws {
+        // 準備
+        let provider = makeProviderWithLoadedRecords(matchIDs: [1001])
+        let eventCollector = LiveOddsEventCollector(stream: provider.provider.stream())
+        _ = try await eventCollector.collectNextEvents(count: 3, in: self)
+
+        // 執行
+        provider.webSocketClient.send(.disconnected(reason: .noMatchIDs))
+        let events = try await eventCollector.collectNextEvents(count: 1, in: self)
+
+        // 驗證
+        let unavailableEvent = try XCTUnwrap(events.first)
+        XCTAssertEqual(
+            unavailableEvent,
+            .feedStatusChanged(.unavailable(message: "No matches available for live odds"))
+        )
+        XCTAssertEqual(provider.webSocketClient.connectCallCount, 1)
+    }
+
+    func testFailedWebSocketEventBroadcastsUnavailableAndStops() async throws {
+        // 準備
+        let provider = makeProviderWithLoadedRecords(matchIDs: [1001])
+        let eventCollector = LiveOddsEventCollector(stream: provider.provider.stream())
+        _ = try await eventCollector.collectNextEvents(count: 3, in: self)
+
+        // 執行
+        provider.webSocketClient.send(.failed(.connectionFailed))
+        let events = try await eventCollector.collectNextEvents(count: 1, in: self)
+
+        // 驗證
+        let unavailableEvent = try XCTUnwrap(events.first)
+        XCTAssertEqual(
+            unavailableEvent,
+            .feedStatusChanged(.unavailable(message: "Live odds unavailable"))
+        )
+        XCTAssertEqual(provider.webSocketClient.connectCallCount, 1)
+    }
+
+    func testStreamEndedReconnectsUntilMaxAttemptsThenBroadcastsUnavailable() async throws {
+        // 準備
+        let provider = makeProviderWithLoadedRecords(
+            matchIDs: [1001],
             reconnectPolicy: ReconnectPolicy(
                 initialDelayNanoseconds: 0,
                 maxDelayNanoseconds: 0,
@@ -139,148 +219,422 @@ final class LiveOddsProviderTests: XCTestCase {
                 maxAttempts: 2
             )
         )
-        let eventRecorder = EventRecorder()
-        let collectionTask = collectEvents(from: provider, into: eventRecorder)
+        let eventCollector = LiveOddsEventCollector(stream: provider.provider.stream())
+        _ = try await eventCollector.collectNextEvents(count: 3, in: self)
 
-        await waitUntil {
-            eventRecorder.events.contains(.feedStatusChanged(.unavailable(message: "Live odds unavailable")))
-        }
-        collectionTask.cancel()
+        // 執行
+        provider.webSocketClient.send(.disconnected(reason: .streamEnded))
+        let firstReconnectEvents = try await eventCollector.collectNextEvents(count: 1, in: self)
+        try await waitForConnectCallCount(2, in: provider.webSocketClient)
 
-        XCTAssertEqual(webSocketClient.connectCallCount, 3)
+        provider.webSocketClient.send(.disconnected(reason: .streamEnded))
+        let secondReconnectEvents = try await eventCollector.collectNextEvents(count: 1, in: self)
+        try await waitForConnectCallCount(3, in: provider.webSocketClient)
+
+        provider.webSocketClient.send(.disconnected(reason: .streamEnded))
+        let unavailableEvents = try await eventCollector.collectNextEvents(count: 1, in: self)
+
+        // 驗證
+        XCTAssertEqual(firstReconnectEvents, [.feedStatusChanged(.reconnecting)])
+        XCTAssertEqual(secondReconnectEvents, [.feedStatusChanged(.reconnecting)])
+        XCTAssertEqual(
+            unavailableEvents,
+            [.feedStatusChanged(.unavailable(message: "Live odds unavailable"))]
+        )
+        XCTAssertEqual(provider.webSocketClient.connectCallCount, 3)
     }
 
-    private func makeProvider(
+    func testCancelingLastSubscriberDisconnectsWebSocket() async throws {
+        // 準備
+        let provider = makeProviderWithLoadedRecords(matchIDs: [1001])
+        let task = Task { @MainActor in
+            let eventCollector = LiveOddsEventCollector(stream: provider.provider.stream())
+            while !Task.isCancelled {
+                _ = eventCollector
+                await Task.yield()
+            }
+        }
+        await Task.yield()
+
+        // 執行
+        task.cancel()
+        await task.value
+        await Task.yield()
+
+        // 驗證
+        XCTAssertEqual(provider.webSocketClient.disconnectCallCount, 1)
+    }
+
+    func testLateSubscriberAfterOddsUpdateReceivesUpdatedRecords() async throws {
+        // 準備
+        let provider = makeProviderWithLoadedRecords(matchIDs: [1001])
+        let firstCollector = LiveOddsEventCollector(stream: provider.provider.stream())
+        _ = try await firstCollector.collectNextEvents(count: 3, in: self)
+
+        // 傳送賠率更新
+        provider.webSocketClient.send(.oddsUpdated([
+            OddsUpdateDTO(matchID: 1001, teamAOdds: 1.88, teamBOdds: 2.05)
+        ]))
+        _ = try await firstCollector.collectNextEvents(count: 1, in: self)
+
+        // 新 subscriber 加入：snapshot + re-fetch 共兩個 events
+        let secondCollector = LiveOddsEventCollector(stream: provider.provider.stream())
+        let secondEvents = try await secondCollector.collectNextEvents(count: 2, in: self)
+
+        // 第一個 event 是 snapshot，應包含 WebSocket 更新後的賠率
+        guard case let .recordsLoaded(snapshotRecords) = secondEvents[0] else {
+            return XCTFail("Expected snapshot recordsLoaded for late subscriber")
+        }
+        XCTAssertEqual(snapshotRecords.count, 1)
+        XCTAssertEqual(
+            snapshotRecords.first?.oddsState,
+            .available(teamAOdds: 1.88, teamBOdds: 2.05)
+        )
+
+        // 第二個 event 是 re-fetch 結果（API 原始賠率 1.50），覆蓋了 store
+        guard case let .recordsLoaded(refreshedRecords) = secondEvents[1] else {
+            return XCTFail("Expected refreshed recordsLoaded event")
+        }
+        XCTAssertEqual(
+            refreshedRecords.first?.oddsState,
+            .available(teamAOdds: 1.50, teamBOdds: 2.50)
+        )
+
+        // Store 被呼叫兩次 snapshot：first subscriber（empty）+ late subscriber
+        XCTAssertEqual(provider.store.snapshotCallCount, 2)
+    }
+
+}
+
+private extension LiveOddsProviderTests {
+    struct LoadedProvider {
+        let provider: LiveOddsProvider
+        let webSocketClient: ControllableOddsWebSocketClient
+        let store: FakeOddsStore
+    }
+
+    enum TestError: Error {
+        case expected
+    }
+
+    func makeProvider(
         matchesService: MatchesServiceProtocol? = nil,
         oddsService: OddsServiceProtocol? = nil,
-        oddsWebSocketClient: OddsWebSocketClientProtocol? = nil,
-        reconnectPolicy: ReconnectPolicy = .zeroDelay
+        webSocketClient: ControllableOddsWebSocketClient? = nil,
+        store: OddsStoreProtocol = FakeOddsStore(),
+        reconnectPolicy: ReconnectPolicy = .test
     ) -> LiveOddsProvider {
-        LiveOddsProvider(
-            matchesService: matchesService ?? FakeLiveOddsMatchesService(),
-            oddsService: oddsService ?? FakeLiveOddsService(),
-            oddsWebSocketClient: oddsWebSocketClient ?? FakeLiveOddsWebSocketClient(),
+        let webSocketClient = webSocketClient ?? ControllableOddsWebSocketClient()
+        return LiveOddsProvider(
+            matchesService: matchesService ?? FakeMatchesService(matches: [
+                makeMatch(matchID: 1001)
+            ]),
+            oddsService: oddsService ?? FakeOddsService(odds: [
+                makeOdds(matchID: 1001)
+            ]),
+            oddsWebSocketClient: webSocketClient,
+            oddsStore: store,
             reconnectPolicy: reconnectPolicy
         )
     }
 
-    private func collectEvents(
-        from provider: LiveOddsProviderProtocol,
-        into eventRecorder: EventRecorder
-    ) -> Task<Void, Never> {
-        Task { @MainActor in
-            for await event in provider.stream() {
-                eventRecorder.events.append(event)
-            }
-        }
+    func makeProviderWithLoadedRecords(
+        matchIDs: [Int],
+        reconnectPolicy: ReconnectPolicy = .test
+    ) -> LoadedProvider {
+        let store = FakeOddsStore()
+        let webSocketClient = ControllableOddsWebSocketClient()
+        let provider = makeProvider(
+            matchesService: FakeMatchesService(matches: matchIDs.map { makeMatch(matchID: $0) }),
+            oddsService: FakeOddsService(odds: matchIDs.map { makeOdds(matchID: $0) }),
+            webSocketClient: webSocketClient,
+            store: store,
+            reconnectPolicy: reconnectPolicy
+        )
+        return LoadedProvider(provider: provider, webSocketClient: webSocketClient, store: store)
     }
 
-    private func waitUntil(
-        timeoutNanoseconds: UInt64 = 1_000_000_000,
-        condition: @escaping @MainActor () -> Bool,
-        file: StaticString = #filePath,
-        line: UInt = #line
-    ) async {
-        let deadline = ContinuousClock.now + .nanoseconds(Int64(timeoutNanoseconds))
+    func collectEvents(
+        from stream: AsyncStream<LiveOddsEvent>,
+        count: Int,
+        timeout: TimeInterval = 1
+    ) async throws -> [LiveOddsEvent] {
+        let eventCollector = LiveOddsEventCollector(stream: stream)
+        return try await eventCollector.collectNextEvents(
+            count: count,
+            in: self,
+            timeout: timeout
+        )
+    }
 
-        while ContinuousClock.now < deadline {
-            if condition() {
+    func waitForConnectCallCount(
+        _ expectedConnectCallCount: Int,
+        in webSocketClient: ControllableOddsWebSocketClient
+    ) async throws {
+        for _ in 0..<10 {
+            if webSocketClient.connectCallCount == expectedConnectCallCount {
                 return
             }
 
             await Task.yield()
         }
 
-        XCTFail("Condition was not met before timeout", file: file, line: line)
+        throw EventCollectionError.missingEvents
     }
-}
 
-@MainActor
-private final class EventRecorder {
-    var events: [LiveOddsEvent] = []
+    func makeMatch(
+        matchID: Int,
+        teamA: String = "Eagles",
+        teamB: String = "Tigers",
+        startTime: String = "2026-01-01T12:00:00Z"
+    ) -> MatchResponseDTO {
+        MatchResponseDTO(
+            matchID: matchID,
+            teamA: teamA,
+            teamB: teamB,
+            startTime: startTime
+        )
+    }
+
+    func makeOdds(
+        matchID: Int,
+        teamAOdds: Decimal = 1.50,
+        teamBOdds: Decimal = 2.50
+    ) -> OddsResponseDTO {
+        OddsResponseDTO(
+            matchID: matchID,
+            teamAOdds: teamAOdds,
+            teamBOdds: teamBOdds
+        )
+    }
+
+    func makeRecord(matchID: Int) -> MatchRecord {
+        MatchRecord(
+            matchID: matchID,
+            teamA: "Eagles",
+            teamB: "Tigers",
+            startTime: Date(timeIntervalSince1970: TimeInterval(matchID)),
+            oddsState: .unavailable
+        )
+    }
 }
 
 private extension ReconnectPolicy {
-    static let zeroDelay = ReconnectPolicy(
+    static let test = ReconnectPolicy(
         initialDelayNanoseconds: 0,
         maxDelayNanoseconds: 0,
         jitterRangeNanoseconds: 0,
-        maxAttempts: 5
+        maxAttempts: 0
     )
 }
 
-private struct FakeLiveOddsMatchesService: MatchesServiceProtocol {
-    func fetchMatches() async throws -> [MatchResponseDTO] {
-        [
-            MatchResponseDTO(
-                matchID: 1001,
-                teamA: "Eagles",
-                teamB: "Tigers",
-                startTime: "2025-07-04T13:00:00Z"
-            ),
-            MatchResponseDTO(
-                matchID: 1002,
-                teamA: "Hawks",
-                teamB: "Lions",
-                startTime: "2025-07-04T14:00:00Z"
-            )
-        ]
+private enum EventCollectionError: Error {
+    case missingEvents
+}
+
+@MainActor
+private final class LiveOddsEventCollector {
+    private var pendingEvents: [LiveOddsEvent] = []
+    private var pendingExpectations: [EventExpectation] = []
+    private var collectionTask: Task<Void, Never>?
+
+    init(stream: AsyncStream<LiveOddsEvent>) {
+        collectionTask = Task { @MainActor [weak self] in
+            for await event in stream {
+                self?.record(event)
+            }
+        }
+    }
+
+    deinit {
+        collectionTask?.cancel()
+    }
+
+    func collectNextEvents(
+        count: Int,
+        in testCase: XCTestCase,
+        timeout: TimeInterval = 1
+    ) async throws -> [LiveOddsEvent] {
+        guard count > 0 else { return [] }
+
+        let expectation = testCase.expectation(
+            description: "Collect next \(count) LiveOddsEvent values"
+        )
+        pendingExpectations.append(EventExpectation(targetCount: count, expectation: expectation))
+        fulfillReadyExpectations()
+
+        await testCase.fulfillment(of: [expectation], timeout: timeout)
+        guard pendingEvents.count >= count else {
+            throw EventCollectionError.missingEvents
+        }
+
+        let collectedEvents = Array(pendingEvents.prefix(count))
+        pendingEvents.removeFirst(count)
+        return collectedEvents
+    }
+
+    func assertNoEvent(
+        in testCase: XCTestCase,
+        timeout: TimeInterval = 0.05
+    ) async {
+        let expectation = testCase.expectation(description: "No LiveOddsEvent")
+        expectation.isInverted = true
+        pendingExpectations.append(EventExpectation(targetCount: 1, expectation: expectation))
+        fulfillReadyExpectations()
+
+        await testCase.fulfillment(of: [expectation], timeout: timeout)
+    }
+
+    private func record(_ event: LiveOddsEvent) {
+        pendingEvents.append(event)
+        fulfillReadyExpectations()
+    }
+
+    private func fulfillReadyExpectations() {
+        let readyExpectations = pendingExpectations.filter { pendingEvents.count >= $0.targetCount }
+        pendingExpectations.removeAll { pendingEvents.count >= $0.targetCount }
+        readyExpectations.forEach { $0.expectation.fulfill() }
     }
 }
 
-private struct FakeLiveOddsService: OddsServiceProtocol {
+private struct EventExpectation {
+    let targetCount: Int
+    let expectation: XCTestExpectation
+}
+
+private actor FakeMatchesService: MatchesServiceProtocol {
+    private let result: Result<[MatchResponseDTO], Error>
+    private(set) var fetchCount = 0
+
+    init(matches: [MatchResponseDTO]) {
+        result = .success(matches)
+    }
+
+    init(result: Result<[MatchResponseDTO], Error>) {
+        self.result = result
+    }
+
+    func fetchMatches() async throws -> [MatchResponseDTO] {
+        fetchCount += 1
+        return try result.get()
+    }
+
+    func fetchCallCount() -> Int {
+        fetchCount
+    }
+}
+
+private actor FakeOddsService: OddsServiceProtocol {
+    private let result: Result<[OddsResponseDTO], Error>
+    private(set) var fetchCount = 0
+
+    init(odds: [OddsResponseDTO]) {
+        result = .success(odds)
+    }
+
+    init(result: Result<[OddsResponseDTO], Error>) {
+        self.result = result
+    }
+
     func fetchInitialOdds() async throws -> [OddsResponseDTO] {
-        [
-            OddsResponseDTO(matchID: 1001, teamAOdds: 1.95, teamBOdds: 2.10),
-            OddsResponseDTO(matchID: 1002, teamAOdds: 2.20, teamBOdds: 1.75)
-        ]
+        fetchCount += 1
+        return try result.get()
+    }
+
+    func fetchCallCount() -> Int {
+        fetchCount
     }
 }
 
 @MainActor
-private final class FakeLiveOddsWebSocketClient: OddsWebSocketClientProtocol {
-    enum ConnectBehavior {
-        case yieldConnected
-        case finishImmediately
-    }
+private final class ControllableOddsWebSocketClient: OddsWebSocketClientProtocol {
+    private var continuation: AsyncStream<OddsWebSocketEvent>.Continuation?
 
-    private let connectBehavior: ConnectBehavior
-    private var continuations: [AsyncStream<OddsWebSocketEvent>.Continuation] = []
-
-    private(set) var connectedMatchIDs: [Int] = []
     private(set) var connectCallCount = 0
     private(set) var disconnectCallCount = 0
-
-    init(connectBehavior: ConnectBehavior = .yieldConnected) {
-        self.connectBehavior = connectBehavior
-    }
+    private(set) var connectedMatchIDsHistory: [[Int]] = []
 
     func connect(matchIDs: [Int]) -> AsyncStream<OddsWebSocketEvent> {
         connectCallCount += 1
-        connectedMatchIDs = matchIDs
+        connectedMatchIDsHistory.append(matchIDs)
 
         let streamPair = AsyncStream<OddsWebSocketEvent>.makeStream(
-            of: OddsWebSocketEvent.self
+            of: OddsWebSocketEvent.self,
+            bufferingPolicy: .bufferingNewest(20)
         )
-        continuations.append(streamPair.continuation)
-
-        switch connectBehavior {
-        case .yieldConnected:
-            streamPair.continuation.yield(.connected)
-        case .finishImmediately:
-            streamPair.continuation.finish()
-        }
-
+        continuation = streamPair.continuation
         return streamPair.stream
     }
 
     func disconnect() {
         disconnectCallCount += 1
-        continuations.forEach { $0.finish() }
-        continuations = []
+        continuation?.yield(.disconnected(reason: .manual))
+        continuation?.finish()
+        continuation = nil
     }
 
-    func send(_ updates: [OddsUpdateDTO]) {
-        continuations.last?.yield(.oddsUpdated(updates))
+    func send(_ event: OddsWebSocketEvent) {
+        continuation?.yield(event)
+        switch event {
+        case .disconnected, .failed:
+            continuation?.finish()
+        case .connected, .oddsUpdated:
+            break
+        }
+    }
+}
+
+private final class FakeOddsStore: OddsStoreProtocol {
+    private var records: [MatchRecord] = []
+    private var indexByMatchID: [Int: Int] = [:]
+
+    var snapshotOverride: Snapshot?
+
+    private(set) var replaceRecordsCallCount = 0
+    private(set) var lastReplacedRecords: [MatchRecord] = []
+    private(set) var snapshotCallCount = 0
+    private(set) var applyOddsUpdatesCallCount = 0
+    private(set) var lastAppliedUpdates: [OddsUpdateDTO] = []
+
+    func replaceRecords(_ records: [MatchRecord]) async {
+        replaceRecordsCallCount += 1
+        lastReplacedRecords = records
+        self.records = records
+        indexByMatchID = Dictionary(
+            uniqueKeysWithValues: records.enumerated().map { ($1.matchID, $0) }
+        )
+    }
+
+    func snapshot() async -> Snapshot {
+        snapshotCallCount += 1
+        if let override = snapshotOverride {
+            return override
+        }
+        return Snapshot(records: records)
+    }
+
+    func applyOddsUpdates(_ updates: [OddsUpdateDTO]) async -> UpdateResult {
+        applyOddsUpdatesCallCount += 1
+        lastAppliedUpdates = updates
+
+        var changedRecords: [MatchRecord] = []
+        var unknownMatchIDs: [Int] = []
+
+        for update in updates {
+            guard let index = indexByMatchID[update.matchID] else {
+                unknownMatchIDs.append(update.matchID)
+                continue
+            }
+            records[index].oddsState = .available(
+                teamAOdds: update.teamAOdds,
+                teamBOdds: update.teamBOdds
+            )
+            changedRecords.append(records[index])
+        }
+
+        return UpdateResult(
+            changedRecords: changedRecords,
+            unknownMatchIDs: unknownMatchIDs
+        )
     }
 }
