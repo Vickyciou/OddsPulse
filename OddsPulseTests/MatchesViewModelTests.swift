@@ -72,7 +72,7 @@ final class MatchesViewModelTests: XCTestCase {
 
         viewModel.start()
         await waitUntil { provider.streamCallCount == 1 }
-        provider.send(.initialLoadFailed(message: "Unable to load matches"))
+        provider.send(.refreshFailed(message: "Unable to load matches"))
         await waitUntil {
             viewModel.state == .failed(message: "Unable to load matches")
         }
@@ -132,7 +132,7 @@ final class MatchesViewModelTests: XCTestCase {
         await waitUntil { provider.streamCallCount == 1 }
         provider.send(.recordsLoaded(Self.makeRecords()))
         await waitUntil { viewModel.rows.count == 2 }
-        provider.send(.initialLoadFailed(message: "Unable to load matches"))
+        provider.send(.refreshFailed(message: "Unable to load matches"))
         await waitUntil {
             viewModel.state == .failed(message: "Unable to load matches")
         }
@@ -250,7 +250,7 @@ final class MatchesViewModelTests: XCTestCase {
 
         viewModel.stopObservingLiveOdds()
         await waitUntil { provider.terminationCount == 1 }
-        provider.send(.initialLoadFailed(message: "Should not update stopped view model"))
+        provider.send(.refreshFailed(message: "Should not update stopped view model"))
         await yieldMainActor()
 
         XCTAssertEqual(viewModel.state, .loading)

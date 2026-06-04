@@ -51,7 +51,7 @@ enum LiveOddsEvent: Equatable {
     case recordsLoaded([MatchRecord])
     case oddsUpdated(changedRecords: [MatchRecord])
     case feedStatusChanged(LiveOddsFeedStatus)
-    case initialLoadFailed(message: String)
+    case refreshFailed(message: String)
 }
 
 enum LiveOddsFeedStatus: Equatable {
@@ -102,7 +102,7 @@ enum LiveOddsFeedStatus: Equatable {
 |:---|:---|
 | ViewController | 建立 UIKit view、綁定 ViewModel output、維護 table rows 並套用 row updates |
 | ViewModel | 訂閱 `LiveOddsProvider`、管理畫面狀態、維護 `displayRows` 與 `matchID -> row index`，將 provider event 轉成 row update |
-| LiveOddsProvider | 統一資料來源，管理 snapshot、initial API load、WebSocket lifecycle、subscriber count 與 reconnect |
+| LiveOddsProvider | 統一資料來源，管理 snapshot、API refresh、WebSocket lifecycle、subscriber count 與 reconnect |
 | Service / WebSocket Client | 模擬 `/matches`、`/odds` 與 WebSocket odds update |
 | OddsStoreProtocol / OddsStore actor | 保護共享 match/odds state，確保 thread-safe，提供 snapshot 並套用 partial odds updates。`LiveOddsProvider` 依賴 protocol，便於單元測試注入 fake |
 | Models | 定義 API/mock model、domain model 與 UI display model |
@@ -171,6 +171,6 @@ Live odds updates 由 `MockOddsWebSocketClient` 產生，client 持有 `Timer` �
 | Odds update | 測試指定 match 的 odds 更新 |
 | Thread safety | 測試 actor store 合併資料時不造成 state 不一致 |
 | WebSocket batch | 測試 batch size、同 batch 不重複 `matchID`、只從輸入 matchIDs 產生 update |
-| Provider output | 測試 snapshot restore、initial load、odds update、subscriber cancellation 與 reconnect max attempts |
+| Provider output | 測試 snapshot restore、API refresh、odds update、subscriber cancellation 與 reconnect max attempts |
 | ViewModel output | 測試 provider event 可正確轉成 loaded state、row update 與 feed status |
 | Cache restore | 測試新 subscriber 可立即收到 cached records，且包含最新 WebSocket-applied odds |

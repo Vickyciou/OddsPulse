@@ -10,7 +10,7 @@ enum LiveOddsEvent: Equatable {
     case recordsLoaded([MatchRecord])
     case oddsUpdated(changedRecords: [MatchRecord])
     case feedStatusChanged(LiveOddsFeedStatus)
-    case initialLoadFailed(message: String)
+    case refreshFailed(message: String)
 }
 
 enum LiveOddsFeedStatus: Equatable {
@@ -30,7 +30,7 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
     private let reconnectPolicy: ReconnectPolicy
 
     private var eventContinuations: [UUID: AsyncStream<LiveOddsEvent>.Continuation] = [:]
-    private var initialLoadTask: Task<Void, Never>?
+    private var refreshTask: Task<Void, Never>?
     private var liveUpdatesTask: Task<Void, Never>?
     private var reconnectAttempt = 0
 
@@ -50,7 +50,7 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
 
     isolated deinit {
         stopLiveUpdates()
-        initialLoadTask?.cancel()
+        refreshTask?.cancel()
         eventContinuations.values.forEach { $0.finish() }
     }
 
@@ -83,20 +83,20 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
             send(.loading, to: subscriberID)
         }
 
-        startInitialLoadIfNeeded()
+        startRefreshIfNeeded()
     }
 
-    private func startInitialLoadIfNeeded() {
-        guard initialLoadTask == nil else { return }
+    private func startRefreshIfNeeded() {
+        guard refreshTask == nil else { return }
 
-        initialLoadTask = Task { @MainActor [weak self] in
-            await self?.loadInitialRecords()
+        refreshTask = Task { @MainActor [weak self] in
+            await self?.refreshRecords()
         }
     }
 
-    private func loadInitialRecords() async {
+    private func refreshRecords() async {
         defer {
-            initialLoadTask = nil
+            refreshTask = nil
         }
 
         do {
@@ -113,7 +113,7 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
         } catch is CancellationError {
             return
         } catch {
-            broadcast(.initialLoadFailed(message: "Unable to load matches"))
+            broadcast(.refreshFailed(message: "Unable to load matches"))
         }
     }
 
@@ -209,8 +209,8 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
 
         guard eventContinuations.isEmpty else { return }
 
-        initialLoadTask?.cancel()
-        initialLoadTask = nil
+        refreshTask?.cancel()
+        refreshTask = nil
         stopLiveUpdates()
     }
 

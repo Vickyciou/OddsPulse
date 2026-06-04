@@ -27,13 +27,13 @@ protocol LiveOddsProviderProtocol: Sendable {
 
 | Event | 語意 |
 |:---|:---|
-| `.loading` | snapshot 為空，開始 initial load |
-| `.recordsLoaded([MatchRecord])` | 初始資料或 cached snapshot 可呈現 |
+| `.loading` | snapshot 為空，開始刷新 |
+| `.recordsLoaded([MatchRecord])` | 刷新結果或 cached snapshot |
 | `.oddsUpdated(changedRecords:)` | 已知 match 的 odds 有異動 |
 | `.feedStatusChanged(LiveOddsFeedStatus)` | live feed 連線狀態改變 |
-| `.initialLoadFailed(message:)` | 初始 matches/odds 載入失敗 |
+| `.refreshFailed(message:)` | matches/odds 刷新失敗 |
 
-## Initial Load Flow
+## Refresh Flow
 
 ```text
 subscriber calls stream()
@@ -89,8 +89,8 @@ Subscriber lifecycle：
 
 1. 每次 `stream()` 建立一個 subscriber ID 與 continuation。
 2. continuation termination 會移除 subscriber。
-3. subscriber count 歸零時，provider 取消 initial load task、停止 live updates 並呼叫 `disconnect()`。
-4. provider deinit 時會停止 live updates、取消 initial load task 並 finish 所有 continuation。
+3. subscriber count 歸零時，provider 取消 refresh task、停止 live updates 並呼叫 `disconnect()`。
+4. provider deinit 時會停止 live updates、取消 refresh task 並 finish 所有 continuation。
 
 ## Reconnect Behavior
 

@@ -62,7 +62,7 @@ final class LiveOddsProviderTests: XCTestCase {
         // 驗證
         XCTAssertEqual(events, [
             .loading,
-            .initialLoadFailed(message: "Unable to load matches")
+            .refreshFailed(message: "Unable to load matches")
         ])
         XCTAssertEqual(webSocketClient.connectCallCount, 0)
     }
@@ -84,7 +84,7 @@ final class LiveOddsProviderTests: XCTestCase {
         // 驗證
         XCTAssertEqual(events, [
             .loading,
-            .initialLoadFailed(message: "Unable to load matches")
+            .refreshFailed(message: "Unable to load matches")
         ])
         XCTAssertEqual(webSocketClient.connectCallCount, 0)
     }

@@ -68,7 +68,7 @@ final class MatchesViewModel {
             updateRows(from: changedRecords)
         case let .feedStatusChanged(feedStatus):
             self.feedStatus = feedStatus
-        case let .initialLoadFailed(message):
+        case let .refreshFailed(message):
             clearRows()
             state = .failed(message: message)
         }
