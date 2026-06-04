@@ -15,16 +15,16 @@ final class OddsStoreTests: XCTestCase {
             OddsUpdateDTO(matchID: 1002, teamAOdds: 1.88, teamBOdds: 2.05),
             OddsUpdateDTO(matchID: 9999, teamAOdds: 4.00, teamBOdds: 5.00)
         ])
-        let snapshot = await store.snapshot()
+        let snapshotRecords = await store.snapshot()
 
         XCTAssertEqual(applyResult.changedRecords.map(\.matchID), [1002])
         XCTAssertEqual(applyResult.unknownMatchIDs, [9999])
         XCTAssertEqual(
-            snapshot.records.first { $0.matchID == 1001 }?.oddsState,
+            snapshotRecords.first { $0.matchID == 1001 }?.oddsState,
             .unavailable
         )
         XCTAssertEqual(
-            snapshot.records.first { $0.matchID == 1002 }?.oddsState,
+            snapshotRecords.first { $0.matchID == 1002 }?.oddsState,
             .available(teamAOdds: 1.88, teamBOdds: 2.05)
         )
     }
@@ -50,11 +50,11 @@ final class OddsStoreTests: XCTestCase {
             OddsUpdateDTO(matchID: 1001, teamAOdds: 1.75, teamBOdds: 2.25)
         ])
 
-        let snapshot = await store.snapshot()
+        let snapshotRecords = await store.snapshot()
 
-        XCTAssertEqual(snapshot.records.map(\.matchID), [1001])
+        XCTAssertEqual(snapshotRecords.map(\.matchID), [1001])
         XCTAssertEqual(
-            snapshot.records.first?.oddsState,
+            snapshotRecords.first?.oddsState,
             .available(teamAOdds: 1.75, teamBOdds: 2.25)
         )
     }

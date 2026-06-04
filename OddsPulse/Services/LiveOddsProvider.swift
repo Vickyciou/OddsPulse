@@ -75,10 +75,10 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
     }
 
     private func prepareStream(for subscriberID: UUID) async {
-        let snapshot = await oddsStore.snapshot()
-        if !snapshot.isEmpty {
-            send(.recordsLoaded(snapshot.records), to: subscriberID)
-            startLiveUpdatesIfNeeded(matchIDs: snapshot.records.map(\.matchID))
+        let snapshotRecords = await oddsStore.snapshot()
+        if !snapshotRecords.isEmpty {
+            send(.recordsLoaded(snapshotRecords), to: subscriberID)
+            startLiveUpdatesIfNeeded(matchIDs: snapshotRecords.map(\.matchID))
         } else {
             send(.loading, to: subscriberID)
         }

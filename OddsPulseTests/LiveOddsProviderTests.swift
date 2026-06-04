@@ -92,10 +92,10 @@ final class LiveOddsProviderTests: XCTestCase {
     func testCachedSnapshotSubscriberReceivesSnapshotThenRefreshesRecords() async throws {
         // 準備
         let store = FakeOddsStore()
-        store.snapshotOverride = Snapshot(records: [
+        store.snapshotOverride = [
             makeRecord(matchID: 1001),
             makeRecord(matchID: 1002)
-        ])
+        ]
         let matchesService = FakeMatchesService(matches: [
             makeMatch(matchID: 9999)
         ])
@@ -588,7 +588,7 @@ private final class FakeOddsStore: OddsStoreProtocol {
     private var records: [MatchRecord] = []
     private var indexByMatchID: [Int: Int] = [:]
 
-    var snapshotOverride: Snapshot?
+    var snapshotOverride: [MatchRecord]?
 
     private(set) var replaceRecordsCallCount = 0
     private(set) var lastReplacedRecords: [MatchRecord] = []
@@ -605,12 +605,12 @@ private final class FakeOddsStore: OddsStoreProtocol {
         )
     }
 
-    func snapshot() async -> Snapshot {
+    func snapshot() async -> [MatchRecord] {
         snapshotCallCount += 1
         if let override = snapshotOverride {
             return override
         }
-        return Snapshot(records: records)
+        return records
     }
 
     func applyOddsUpdates(_ updates: [OddsUpdateDTO]) async -> UpdateResult {

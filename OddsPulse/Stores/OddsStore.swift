@@ -1,13 +1,5 @@
 import Foundation
 
-struct Snapshot: Equatable {
-    let records: [MatchRecord]
-
-    var isEmpty: Bool {
-        records.isEmpty
-    }
-}
-
 struct UpdateResult: Equatable {
     let changedRecords: [MatchRecord]
     let unknownMatchIDs: [Int]
@@ -15,7 +7,7 @@ struct UpdateResult: Equatable {
 
 protocol OddsStoreProtocol: AnyObject {
     func replaceRecords(_ records: [MatchRecord]) async
-    func snapshot() async -> Snapshot
+    func snapshot() async -> [MatchRecord]
     func applyOddsUpdates(_ updates: [OddsUpdateDTO]) async -> UpdateResult
 }
 
@@ -32,8 +24,8 @@ actor OddsStore: OddsStoreProtocol {
         )
     }
 
-    func snapshot() -> Snapshot {
-        Snapshot(records: records)
+    func snapshot() -> [MatchRecord] {
+        records
     }
 
     func applyOddsUpdates(_ updates: [OddsUpdateDTO]) -> UpdateResult {
