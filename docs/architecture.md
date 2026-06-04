@@ -1,6 +1,6 @@
 # Architecture
 
-本文件記錄 OddsPulse 的架構方向、資料流與 thread-safe 設計原則。
+本文件記錄 OddsPulse 的架構現況、資料流與 thread-safe 設計原則。
 
 模組細節請搭配 [`modules/live-odds.md`](modules/live-odds.md) 與 [`modules/matches-ui.md`](modules/matches-ui.md) 閱讀。
 
@@ -8,7 +8,7 @@
 
 OddsPulse 使用 UIKit programmatic UI 與 MVVM。REST mock、WebSocket mock、thread-safe cache 與 reconnect 策略集中在 `LiveOddsProvider`，ViewModel 只消費 provider event 並轉成畫面狀態。
 
-## Target Architecture
+## Current Data Flow
 
 ```text
 Mock REST services
@@ -162,15 +162,15 @@ Live odds updates 由 `MockOddsWebSocketClient` 產生，client 持有 `Timer` �
 
 目前 app target 大量 UI 與 provider-facing code 受 main actor isolation 影響；若切換到 Swift 6 或調整 actor isolation，需同步檢查 `LiveOddsProviderProtocol`、`MatchesViewModel`、fake providers 與 `OddsWebSocketClientProtocol` 的呼叫邊界。
 
-## Testing Strategy
+## Current Test Coverage
 
-| 測試範圍 | 建議 |
+| 測試範圍 | 現有覆蓋 |
 |:---|:---|
-| Sorting | 測試 `startTime` 升序 |
-| Merge logic | 測試 matches + initial odds 合併 |
-| Odds update | 測試指定 match 的 odds 更新 |
-| Thread safety | 測試 actor store 合併資料時不造成 state 不一致 |
-| WebSocket batch | 測試 batch size、同 batch 不重複 `matchID`、只從輸入 matchIDs 產生 update |
-| Provider output | 測試 snapshot restore、API refresh、odds update、subscriber cancellation 與 reconnect max attempts |
-| ViewModel output | 測試 provider event 可正確轉成 loaded state、row update 與 feed status |
-| Cache restore | 測試新 subscriber 可立即收到 cached records，且包含最新 WebSocket-applied odds |
+| Sorting | `MatchRecordMapperTests.swift` 驗證 `startTime` 升序與 deterministic tie-breaker |
+| Merge logic | `MatchRecordMapperTests.swift` 驗證 matches + initial odds 合併、缺少 odds、未知 odds 與 invalid start time |
+| Odds update | `OddsStoreTests.swift` 驗證 known / unknown odds updates、replace all 與 snapshot |
+| WebSocket batch | `MockOddsWebSocketClientTests.swift` 驗證 batch match IDs、empty IDs、connected event 與 disconnect stream finish |
+| Provider output | `LiveOddsProviderTests.swift` 驗證 initial load、cached snapshot、unknown update、subscriber cancellation 與 reconnect max attempts |
+| ViewModel output | `MatchesViewModelTests.swift` 驗證 loading、loaded、failed、row update、feed status 與 stream cancellation |
+| Row formatting | `MatchRowViewModelMapperTests.swift` 驗證 unavailable odds 顯示 |
+| Reconnect policy | `ReconnectPolicyTests.swift` 驗證 delay cap 與 retry limit |
