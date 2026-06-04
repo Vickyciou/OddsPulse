@@ -3,7 +3,7 @@ import XCTest
 
 @MainActor
 final class LiveOddsProviderTests: XCTestCase {
-    func testFirstSubscriberReceivesInitialLoadAndLiveConnectionEvents() async throws {
+    func testFirstSubscriberReceivesLoadingRefreshAndLiveConnectionEvents() async throws {
         // 準備
         let matchesService = FakeMatchesService(matches: [
             makeMatch(matchID: 1002, startTime: "2026-01-02T12:00:00Z"),
@@ -47,7 +47,7 @@ final class LiveOddsProviderTests: XCTestCase {
         XCTAssertEqual(store.lastReplacedRecords.map(\.matchID), [1001, 1002])
     }
 
-    func testInitialLoadFailureDoesNotConnectWebSocket() async throws {
+    func testRefreshFailureDoesNotConnectWebSocket() async throws {
         // 準備
         let matchesService = FakeMatchesService(result: .failure(TestError.expected))
         let webSocketClient = ControllableOddsWebSocketClient()
@@ -265,7 +265,7 @@ final class LiveOddsProviderTests: XCTestCase {
         XCTAssertEqual(provider.webSocketClient.disconnectCallCount, 1)
     }
 
-    func testLateSubscriberAfterOddsUpdateReceivesUpdatedRecords() async throws {
+    func testSecondSubscriberAfterOddsUpdateReceivesUpdatedSnapshotThenRefreshedRecords() async throws {
         // 準備
         let provider = makeProviderWithLoadedRecords(matchIDs: [1001])
         let firstCollector = LiveOddsEventCollector(stream: provider.provider.stream())
