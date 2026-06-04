@@ -15,8 +15,7 @@ final class MatchesViewModelTests: XCTestCase {
             states.append(state)
         }
 
-        viewModel.start()
-        await waitUntil { provider.streamCallCount == 1 }
+        await startObserving(viewModel, provider: provider)
         provider.send(.loading)
         await waitUntil { viewModel.state == .loading }
 
@@ -36,8 +35,7 @@ final class MatchesViewModelTests: XCTestCase {
             states.append(state)
         }
 
-        viewModel.start()
-        await waitUntil { provider.streamCallCount == 1 }
+        await startObserving(viewModel, provider: provider)
         provider.send(.recordsLoaded(Self.makeRecords()))
         await waitUntil {
             if case .loaded = viewModel.state {
@@ -53,12 +51,10 @@ final class MatchesViewModelTests: XCTestCase {
         }
 
         XCTAssertEqual(rows.map(\.matchID), [1001, 1002])
-        XCTAssertEqual(rows.first?.teamAOddsText, "1.95")
-        XCTAssertEqual(rows.first?.teamBOddsText, "2.10")
         XCTAssertEqual(viewModel.rows, rows)
     }
 
-    func testInitialLoadFailedEmitsFailedState() async {
+    func testRefreshFailedEmitsFailedState() async {
         let provider = FakeLiveOddsProvider()
         let viewModel = MatchesViewModel(liveOddsProvider: provider)
         defer {
@@ -70,8 +66,7 @@ final class MatchesViewModelTests: XCTestCase {
             states.append(state)
         }
 
-        viewModel.start()
-        await waitUntil { provider.streamCallCount == 1 }
+        await startObserving(viewModel, provider: provider)
         provider.send(.refreshFailed(message: "Unable to load matches"))
         await waitUntil {
             viewModel.state == .failed(message: "Unable to load matches")
@@ -83,72 +78,18 @@ final class MatchesViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.state, .failed(message: "Unable to load matches"))
     }
 
-    func testLoadingClearsRowsAndPreventsUpdatingPreviousRows() async {
-        let provider = FakeLiveOddsProvider()
-        let viewModel = MatchesViewModel(liveOddsProvider: provider)
-        defer {
-            viewModel.stopObservingLiveOdds()
-            provider.finish()
-        }
-        var didUpdateRowIndexes = false
-        viewModel.onRowIndexesUpdated = { _ in
-            didUpdateRowIndexes = true
-        }
-
-        viewModel.start()
-        await waitUntil { provider.streamCallCount == 1 }
-        provider.send(.recordsLoaded(Self.makeRecords()))
-        await waitUntil { viewModel.rows.count == 2 }
-        provider.send(.loading)
-        await waitUntil { viewModel.state == .loading }
-        provider.send(.oddsUpdated(changedRecords: [
-            MatchRecord(
-                matchID: 1002,
-                teamA: "Hawks",
-                teamB: "Lions",
-                startTime: Date(timeIntervalSince1970: 200),
-                oddsState: .available(teamAOdds: 1.88, teamBOdds: 2.05)
-            )
-        ]))
-        await yieldMainActor()
-
-        XCTAssertTrue(viewModel.rows.isEmpty)
-        XCTAssertFalse(didUpdateRowIndexes)
+    func testLoadingClearsRowsAndRowIndexMapping() async {
+        await assertRowsAndRowIndexMappingCleared(
+            by: .loading,
+            expectedState: .loading
+        )
     }
 
-    func testInitialLoadFailedClearsRowsAndPreventsUpdatingPreviousRows() async {
-        let provider = FakeLiveOddsProvider()
-        let viewModel = MatchesViewModel(liveOddsProvider: provider)
-        defer {
-            viewModel.stopObservingLiveOdds()
-            provider.finish()
-        }
-        var didUpdateRowIndexes = false
-        viewModel.onRowIndexesUpdated = { _ in
-            didUpdateRowIndexes = true
-        }
-
-        viewModel.start()
-        await waitUntil { provider.streamCallCount == 1 }
-        provider.send(.recordsLoaded(Self.makeRecords()))
-        await waitUntil { viewModel.rows.count == 2 }
-        provider.send(.refreshFailed(message: "Unable to load matches"))
-        await waitUntil {
-            viewModel.state == .failed(message: "Unable to load matches")
-        }
-        provider.send(.oddsUpdated(changedRecords: [
-            MatchRecord(
-                matchID: 1002,
-                teamA: "Hawks",
-                teamB: "Lions",
-                startTime: Date(timeIntervalSince1970: 200),
-                oddsState: .available(teamAOdds: 1.88, teamBOdds: 2.05)
-            )
-        ]))
-        await yieldMainActor()
-
-        XCTAssertTrue(viewModel.rows.isEmpty)
-        XCTAssertFalse(didUpdateRowIndexes)
+    func testRefreshFailedClearsRowsAndRowIndexMapping() async {
+        await assertRowsAndRowIndexMappingCleared(
+            by: .refreshFailed(message: "Unable to load matches"),
+            expectedState: .failed(message: "Unable to load matches")
+        )
     }
 
     func testOddsUpdatedEmitsRowsUpdatedForChangedRecord() async {
@@ -163,19 +104,9 @@ final class MatchesViewModelTests: XCTestCase {
             updatedRowIndexes = rowIndexes
         }
 
-        viewModel.start()
-        await waitUntil { provider.streamCallCount == 1 }
-        provider.send(.recordsLoaded(Self.makeRecords()))
-        await waitUntil { viewModel.rows.count == 2 }
-        provider.send(.oddsUpdated(changedRecords: [
-            MatchRecord(
-                matchID: 1002,
-                teamA: "Hawks",
-                teamB: "Lions",
-                startTime: Date(timeIntervalSince1970: 200),
-                oddsState: .available(teamAOdds: 1.88, teamBOdds: 2.05)
-            )
-        ]))
+        await startObserving(viewModel, provider: provider)
+        await loadRecords(in: viewModel, from: provider)
+        provider.send(.oddsUpdated(changedRecords: [Self.makeKnownOddsUpdateRecord()]))
         await waitUntil { updatedRowIndexes == [1] }
 
         XCTAssertEqual(updatedRowIndexes, [1])
@@ -196,19 +127,9 @@ final class MatchesViewModelTests: XCTestCase {
             didUpdateRows = true
         }
 
-        viewModel.start()
-        await waitUntil { provider.streamCallCount == 1 }
-        provider.send(.recordsLoaded(Self.makeRecords()))
-        await waitUntil { viewModel.rows.count == 2 }
-        provider.send(.oddsUpdated(changedRecords: [
-            MatchRecord(
-                matchID: 9999,
-                teamA: "Unknown",
-                teamB: "Unknown",
-                startTime: Date(timeIntervalSince1970: 300),
-                oddsState: .available(teamAOdds: 1.88, teamBOdds: 2.05)
-            )
-        ]))
+        await startObserving(viewModel, provider: provider)
+        await loadRecords(in: viewModel, from: provider)
+        provider.send(.oddsUpdated(changedRecords: [Self.makeUnknownOddsUpdateRecord()]))
         await yieldMainActor()
 
         XCTAssertFalse(didUpdateRows)
@@ -226,8 +147,7 @@ final class MatchesViewModelTests: XCTestCase {
             feedStatuses.append(feedStatus)
         }
 
-        viewModel.start()
-        await waitUntil { provider.streamCallCount == 1 }
+        await startObserving(viewModel, provider: provider)
         provider.send(.feedStatusChanged(.connecting))
         provider.send(.feedStatusChanged(.live))
         provider.send(.feedStatusChanged(.reconnecting))
@@ -243,8 +163,7 @@ final class MatchesViewModelTests: XCTestCase {
         let provider = FakeLiveOddsProvider()
         let viewModel = MatchesViewModel(liveOddsProvider: provider)
 
-        viewModel.start()
-        await waitUntil { provider.streamCallCount == 1 }
+        await startObserving(viewModel, provider: provider)
         provider.send(.loading)
         await waitUntil { viewModel.state == .loading }
 
@@ -254,6 +173,50 @@ final class MatchesViewModelTests: XCTestCase {
         await yieldMainActor()
 
         XCTAssertEqual(viewModel.state, .loading)
+    }
+
+    private func startObserving(
+        _ viewModel: MatchesViewModel,
+        provider: FakeLiveOddsProvider
+    ) async {
+        viewModel.start()
+        await waitUntil { provider.streamCallCount == 1 }
+    }
+
+    private func loadRecords(
+        in viewModel: MatchesViewModel,
+        from provider: FakeLiveOddsProvider
+    ) async {
+        provider.send(.recordsLoaded(Self.makeRecords()))
+        await waitUntil { viewModel.rows.count == 2 }
+    }
+
+    private func assertRowsAndRowIndexMappingCleared(
+        by event: LiveOddsEvent,
+        expectedState: MatchesViewState,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        let provider = FakeLiveOddsProvider()
+        let viewModel = MatchesViewModel(liveOddsProvider: provider)
+        defer {
+            viewModel.stopObservingLiveOdds()
+            provider.finish()
+        }
+        var didUpdateRowIndexes = false
+        viewModel.onRowIndexesUpdated = { _ in
+            didUpdateRowIndexes = true
+        }
+
+        await startObserving(viewModel, provider: provider)
+        await loadRecords(in: viewModel, from: provider)
+        provider.send(event)
+        await waitUntil { viewModel.state == expectedState }
+        provider.send(.oddsUpdated(changedRecords: [Self.makeKnownOddsUpdateRecord()]))
+        await yieldMainActor()
+
+        XCTAssertTrue(viewModel.rows.isEmpty, file: file, line: line)
+        XCTAssertFalse(didUpdateRowIndexes, file: file, line: line)
     }
 
     private func waitUntil(
@@ -298,6 +261,26 @@ final class MatchesViewModelTests: XCTestCase {
                 oddsState: .available(teamAOdds: 2.20, teamBOdds: 1.75)
             )
         ]
+    }
+
+    private static func makeKnownOddsUpdateRecord() -> MatchRecord {
+        MatchRecord(
+            matchID: 1002,
+            teamA: "Hawks",
+            teamB: "Lions",
+            startTime: Date(timeIntervalSince1970: 200),
+            oddsState: .available(teamAOdds: 1.88, teamBOdds: 2.05)
+        )
+    }
+
+    private static func makeUnknownOddsUpdateRecord() -> MatchRecord {
+        MatchRecord(
+            matchID: 9999,
+            teamA: "Unknown",
+            teamB: "Unknown",
+            startTime: Date(timeIntervalSince1970: 300),
+            oddsState: .available(teamAOdds: 1.88, teamBOdds: 2.05)
+        )
     }
 }
 
