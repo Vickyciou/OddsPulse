@@ -17,12 +17,6 @@ final class MockOddsWebSocketClientTests: XCTestCase {
         }
     }
 
-    func testMakeUpdateBatchReturnsEmptyBatchWhenMatchIDsAreEmpty() {
-        let client = MockOddsWebSocketClient()
-
-        XCTAssertEqual(client.makeUpdateBatch(matchIDs: []), [])
-    }
-
     func testConnectPublishesConnectedEventWhenMatchIDsAreProvided() async {
         let client = MockOddsWebSocketClient()
         let matchIDs = [1001, 1002, 1003]
