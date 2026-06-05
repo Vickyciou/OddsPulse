@@ -10,17 +10,17 @@ final class LiveOddsProviderTests: XCTestCase {
             makeRecord(matchID: 1002)
         ])
         let store = FakeOddsStore()
-        let webSocketClient = ControllableOddsWebSocketClient()
+        let webSocketService = ControllableOddsWebSocketService()
         let provider = makeProvider(
             recordsRepository: recordsRepository,
-            webSocketClient: webSocketClient,
+            webSocketService: webSocketService,
             store: store
         )
         let eventCollector = LiveOddsEventCollector(stream: provider.stream())
 
         // 執行
         let initialEvents = try await eventCollector.collectNextEvents(count: 3, in: self)
-        webSocketClient.send(.connected)
+        webSocketService.send(.connected)
         let liveEvents = try await eventCollector.collectNextEvents(count: 1, in: self)
         let recordsFetchCount = await recordsRepository.fetchCallCount()
 
@@ -34,8 +34,8 @@ final class LiveOddsProviderTests: XCTestCase {
         XCTAssertEqual(initialEvents[2], .feedStatusChanged(.connecting))
         XCTAssertEqual(liveEvents, [.feedStatusChanged(.live)])
         XCTAssertEqual(recordsFetchCount, 1)
-        XCTAssertEqual(webSocketClient.connectCallCount, 1)
-        XCTAssertEqual(webSocketClient.connectedMatchIDsHistory, [[1001, 1002]])
+        XCTAssertEqual(webSocketService.connectCallCount, 1)
+        XCTAssertEqual(webSocketService.connectedMatchIDsHistory, [[1001, 1002]])
         XCTAssertEqual(store.replaceRecordsCallCount, 1)
         XCTAssertEqual(store.lastReplacedRecords.map(\.matchID), [1001, 1002])
     }
@@ -43,10 +43,10 @@ final class LiveOddsProviderTests: XCTestCase {
     func testRefreshFailureDoesNotConnectWebSocket() async throws {
         // 準備
         let recordsRepository = FakeRecordsRepository(result: .failure(TestError.expected))
-        let webSocketClient = ControllableOddsWebSocketClient()
+        let webSocketService = ControllableOddsWebSocketService()
         let provider = makeProvider(
             recordsRepository: recordsRepository,
-            webSocketClient: webSocketClient
+            webSocketService: webSocketService
         )
 
         // 執行
@@ -57,16 +57,16 @@ final class LiveOddsProviderTests: XCTestCase {
             .loading,
             .refreshFailed(message: "Unable to load matches")
         ])
-        XCTAssertEqual(webSocketClient.connectCallCount, 0)
+        XCTAssertEqual(webSocketService.connectCallCount, 0)
     }
 
     func testRepositoryFailureDoesNotConnectWebSocket() async throws {
         // 準備
         let recordsRepository = FakeRecordsRepository(result: .failure(TestError.expected))
-        let webSocketClient = ControllableOddsWebSocketClient()
+        let webSocketService = ControllableOddsWebSocketService()
         let provider = makeProvider(
             recordsRepository: recordsRepository,
-            webSocketClient: webSocketClient
+            webSocketService: webSocketService
         )
 
         // 執行
@@ -77,7 +77,7 @@ final class LiveOddsProviderTests: XCTestCase {
             .loading,
             .refreshFailed(message: "Unable to load matches")
         ])
-        XCTAssertEqual(webSocketClient.connectCallCount, 0)
+        XCTAssertEqual(webSocketService.connectCallCount, 0)
     }
 
     func testCachedSnapshotSubscriberReceivesSnapshotThenRefreshesRecords() async throws {
@@ -90,10 +90,10 @@ final class LiveOddsProviderTests: XCTestCase {
         let recordsRepository = FakeRecordsRepository(records: [
             makeRecord(matchID: 9999)
         ])
-        let webSocketClient = ControllableOddsWebSocketClient()
+        let webSocketService = ControllableOddsWebSocketService()
         let provider = makeProvider(
             recordsRepository: recordsRepository,
-            webSocketClient: webSocketClient,
+            webSocketService: webSocketService,
             store: store
         )
 
@@ -112,7 +112,7 @@ final class LiveOddsProviderTests: XCTestCase {
         XCTAssertEqual(snapshotRecords.map(\.matchID), [1001, 1002])
         XCTAssertEqual(events[1], .feedStatusChanged(.connecting))
         XCTAssertEqual(refreshedRecords.map(\.matchID), [9999])
-        XCTAssertEqual(webSocketClient.connectedMatchIDsHistory, [[1001, 1002]])
+        XCTAssertEqual(webSocketService.connectedMatchIDsHistory, [[1001, 1002]])
     }
 
     func testOddsUpdateBroadcastsOnlyChangedKnownRecords() async throws {
@@ -122,7 +122,7 @@ final class LiveOddsProviderTests: XCTestCase {
         _ = try await eventCollector.collectNextEvents(count: 3, in: self)
 
         // 執行
-        provider.webSocketClient.send(.oddsUpdated([
+        provider.webSocketService.send(.oddsUpdated([
             OddsUpdateDTO(matchID: 1002, teamAOdds: 1.88, teamBOdds: 2.05),
             OddsUpdateDTO(matchID: 9999, teamAOdds: 4.00, teamBOdds: 5.00)
         ]))
@@ -150,11 +150,11 @@ final class LiveOddsProviderTests: XCTestCase {
         _ = try await eventCollector.collectNextEvents(count: 3, in: self)
 
         // 執行
-        provider.webSocketClient.send(.disconnected(reason: .manual))
+        provider.webSocketService.send(.disconnected(reason: .manual))
 
         // 驗證
         await eventCollector.assertNoEvent(in: self)
-        XCTAssertEqual(provider.webSocketClient.connectCallCount, 1)
+        XCTAssertEqual(provider.webSocketService.connectCallCount, 1)
     }
 
     func testNoMatchIDsDisconnectBroadcastsUnavailableAndDoesNotReconnect() async throws {
@@ -164,7 +164,7 @@ final class LiveOddsProviderTests: XCTestCase {
         _ = try await eventCollector.collectNextEvents(count: 3, in: self)
 
         // 執行
-        provider.webSocketClient.send(.disconnected(reason: .noMatchIDs))
+        provider.webSocketService.send(.disconnected(reason: .noMatchIDs))
         let events = try await eventCollector.collectNextEvents(count: 1, in: self)
 
         // 驗證
@@ -173,7 +173,7 @@ final class LiveOddsProviderTests: XCTestCase {
             unavailableEvent,
             .feedStatusChanged(.unavailable(message: "No matches available for live odds"))
         )
-        XCTAssertEqual(provider.webSocketClient.connectCallCount, 1)
+        XCTAssertEqual(provider.webSocketService.connectCallCount, 1)
     }
 
     func testFailedWebSocketEventBroadcastsUnavailableAndStops() async throws {
@@ -183,7 +183,7 @@ final class LiveOddsProviderTests: XCTestCase {
         _ = try await eventCollector.collectNextEvents(count: 3, in: self)
 
         // 執行
-        provider.webSocketClient.send(.failed(.connectionFailed))
+        provider.webSocketService.send(.failed(.connectionFailed))
         let events = try await eventCollector.collectNextEvents(count: 1, in: self)
 
         // 驗證
@@ -192,7 +192,7 @@ final class LiveOddsProviderTests: XCTestCase {
             unavailableEvent,
             .feedStatusChanged(.unavailable(message: "Live odds unavailable"))
         )
-        XCTAssertEqual(provider.webSocketClient.connectCallCount, 1)
+        XCTAssertEqual(provider.webSocketService.connectCallCount, 1)
     }
 
     func testStreamEndedReconnectsUntilMaxAttemptsThenBroadcastsUnavailable() async throws {
@@ -210,15 +210,15 @@ final class LiveOddsProviderTests: XCTestCase {
         _ = try await eventCollector.collectNextEvents(count: 3, in: self)
 
         // 執行
-        provider.webSocketClient.send(.disconnected(reason: .streamEnded))
+        provider.webSocketService.send(.disconnected(reason: .streamEnded))
         let firstReconnectEvents = try await eventCollector.collectNextEvents(count: 1, in: self)
-        try await waitForConnectCallCount(2, in: provider.webSocketClient)
+        try await waitForConnectCallCount(2, in: provider.webSocketService)
 
-        provider.webSocketClient.send(.disconnected(reason: .streamEnded))
+        provider.webSocketService.send(.disconnected(reason: .streamEnded))
         let secondReconnectEvents = try await eventCollector.collectNextEvents(count: 1, in: self)
-        try await waitForConnectCallCount(3, in: provider.webSocketClient)
+        try await waitForConnectCallCount(3, in: provider.webSocketService)
 
-        provider.webSocketClient.send(.disconnected(reason: .streamEnded))
+        provider.webSocketService.send(.disconnected(reason: .streamEnded))
         let unavailableEvents = try await eventCollector.collectNextEvents(count: 1, in: self)
 
         // 驗證
@@ -228,7 +228,7 @@ final class LiveOddsProviderTests: XCTestCase {
             unavailableEvents,
             [.feedStatusChanged(.unavailable(message: "Live odds unavailable"))]
         )
-        XCTAssertEqual(provider.webSocketClient.connectCallCount, 3)
+        XCTAssertEqual(provider.webSocketService.connectCallCount, 3)
     }
 
     func testCancelingLastSubscriberDisconnectsWebSocket() async throws {
@@ -249,7 +249,7 @@ final class LiveOddsProviderTests: XCTestCase {
         await Task.yield()
 
         // 驗證
-        XCTAssertEqual(provider.webSocketClient.disconnectCallCount, 1)
+        XCTAssertEqual(provider.webSocketService.disconnectCallCount, 1)
     }
 
     func testSecondSubscriberAfterOddsUpdateReceivesUpdatedSnapshotThenRefreshedRecords() async throws {
@@ -259,7 +259,7 @@ final class LiveOddsProviderTests: XCTestCase {
         _ = try await firstCollector.collectNextEvents(count: 3, in: self)
 
         // 傳送賠率更新
-        provider.webSocketClient.send(.oddsUpdated([
+        provider.webSocketService.send(.oddsUpdated([
             OddsUpdateDTO(matchID: 1001, teamAOdds: 1.88, teamBOdds: 2.05)
         ]))
         _ = try await firstCollector.collectNextEvents(count: 1, in: self)
@@ -296,7 +296,7 @@ final class LiveOddsProviderTests: XCTestCase {
 private extension LiveOddsProviderTests {
     struct LoadedProvider {
         let provider: LiveOddsProvider
-        let webSocketClient: ControllableOddsWebSocketClient
+        let webSocketService: ControllableOddsWebSocketService
         let store: FakeOddsStore
     }
 
@@ -306,16 +306,16 @@ private extension LiveOddsProviderTests {
 
     func makeProvider(
         recordsRepository: RecordsRepositoryProtocol? = nil,
-        webSocketClient: ControllableOddsWebSocketClient? = nil,
+        webSocketService: ControllableOddsWebSocketService? = nil,
         store: OddsStoreProtocol = FakeOddsStore(),
         reconnectPolicy: ReconnectPolicy = .test
     ) -> LiveOddsProvider {
-        let webSocketClient = webSocketClient ?? ControllableOddsWebSocketClient()
+        let webSocketService = webSocketService ?? ControllableOddsWebSocketService()
         return LiveOddsProvider(
             recordsRepository: recordsRepository ?? FakeRecordsRepository(records: [
                 makeRecord(matchID: 1001)
             ]),
-            oddsWebSocketClient: webSocketClient,
+            oddsWebSocketService: webSocketService,
             oddsStore: store,
             reconnectPolicy: reconnectPolicy
         )
@@ -326,16 +326,16 @@ private extension LiveOddsProviderTests {
         reconnectPolicy: ReconnectPolicy = .test
     ) -> LoadedProvider {
         let store = FakeOddsStore()
-        let webSocketClient = ControllableOddsWebSocketClient()
+        let webSocketService = ControllableOddsWebSocketService()
         let provider = makeProvider(
             recordsRepository: FakeRecordsRepository(
                 records: matchIDs.map { makeRecord(matchID: $0, oddsState: .available(teamAOdds: 1.50, teamBOdds: 2.50)) }
             ),
-            webSocketClient: webSocketClient,
+            webSocketService: webSocketService,
             store: store,
             reconnectPolicy: reconnectPolicy
         )
-        return LoadedProvider(provider: provider, webSocketClient: webSocketClient, store: store)
+        return LoadedProvider(provider: provider, webSocketService: webSocketService, store: store)
     }
 
     func collectEvents(
@@ -353,10 +353,10 @@ private extension LiveOddsProviderTests {
 
     func waitForConnectCallCount(
         _ expectedConnectCallCount: Int,
-        in webSocketClient: ControllableOddsWebSocketClient
+        in webSocketService: ControllableOddsWebSocketService
     ) async throws {
         for _ in 0..<10 {
-            if webSocketClient.connectCallCount == expectedConnectCallCount {
+            if webSocketService.connectCallCount == expectedConnectCallCount {
                 return
             }
 
@@ -486,7 +486,7 @@ private actor FakeRecordsRepository: RecordsRepositoryProtocol {
 }
 
 @MainActor
-private final class ControllableOddsWebSocketClient: OddsWebSocketClientProtocol {
+private final class ControllableOddsWebSocketService: OddsWebSocketServiceProtocol {
     private var continuation: AsyncStream<OddsWebSocketEvent>.Continuation?
 
     private(set) var connectCallCount = 0

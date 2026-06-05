@@ -24,7 +24,7 @@ enum LiveOddsFeedStatus: Equatable {
 @MainActor
 final class LiveOddsProvider: LiveOddsProviderProtocol {
     private let recordsRepository: RecordsRepositoryProtocol
-    private let oddsWebSocketClient: OddsWebSocketClientProtocol
+    private let oddsWebSocketService: OddsWebSocketServiceProtocol
     private let oddsStore: OddsStoreProtocol
     private let reconnectPolicy: ReconnectPolicy
 
@@ -35,12 +35,12 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
 
     init(
         recordsRepository: RecordsRepositoryProtocol? = nil,
-        oddsWebSocketClient: OddsWebSocketClientProtocol? = nil,
+        oddsWebSocketService: OddsWebSocketServiceProtocol? = nil,
         oddsStore: OddsStoreProtocol? = nil,
         reconnectPolicy: ReconnectPolicy = .default
     ) {
         self.recordsRepository = recordsRepository ?? RecordsRepository()
-        self.oddsWebSocketClient = oddsWebSocketClient ?? MockOddsWebSocketClient()
+        self.oddsWebSocketService = oddsWebSocketService ?? MockOddsWebSocketService()
         self.oddsStore = oddsStore ?? OddsStore()
         self.reconnectPolicy = reconnectPolicy
     }
@@ -113,7 +113,7 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
 
         reconnectAttempt = 0
         broadcast(.feedStatusChanged(.connecting))
-        let initialEvents = oddsWebSocketClient.connect(matchIDs: matchIDs)
+        let initialEvents = oddsWebSocketService.connect(matchIDs: matchIDs)
         liveUpdatesTask = Task { @MainActor [weak self] in
             await self?.runLiveUpdates(matchIDs: matchIDs, initialEvents: initialEvents)
         }
@@ -130,7 +130,7 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
         var events: AsyncStream<OddsWebSocketEvent>? = initialEvents
 
         while !Task.isCancelled && hasSubscribers {
-            let currentEvents = events ?? oddsWebSocketClient.connect(matchIDs: matchIDs)
+            let currentEvents = events ?? oddsWebSocketService.connect(matchIDs: matchIDs)
             events = nil
 
             for await event in currentEvents {
@@ -212,7 +212,7 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
     private func stopLiveUpdates() {
         liveUpdatesTask?.cancel()
         liveUpdatesTask = nil
-        oddsWebSocketClient.disconnect()
+        oddsWebSocketService.disconnect()
         reconnectAttempt = 0
     }
 

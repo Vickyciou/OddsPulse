@@ -46,6 +46,7 @@ xcodebuild test -project OddsPulse.xcodeproj -scheme OddsPulse -destination 'pla
 | `MatchRowViewModelMapperTests.swift` | unavailable odds 顯示 |
 | `SnapshotTests.swift` | upsert、remove、ordering、lookup、replace、apply |
 | `OddsStoreTests.swift` | known/unknown odds updates、replace all、snapshot |
+| `MockOddsWebSocketServiceTests.swift` | connect/disconnect delegation、event forwarding |
 | `MockOddsWebSocketClientTests.swift` | batch match IDs、empty IDs、connected event、disconnect finishes stream |
 | `LiveOddsProviderTests.swift` | initial load、cached snapshot、unknown update、subscriber cancellation、reconnect max attempts |
 | `MatchesViewModelTests.swift` | loading、loaded、failed、row update、feed status、stream cancellation |

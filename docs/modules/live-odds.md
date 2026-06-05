@@ -9,6 +9,7 @@
 | Provider | `LiveOddsProvider`、`LiveOddsProviderProtocol` | odds 資料單一入口，管理 cache-first flow、background refresh trigger、live feed、store updates、subscriber count 與 reconnect |
 | Repository | `RecordsRepository`、`RecordsRepositoryProtocol` | 平行呼叫 REST mock services、執行 mapper，回傳 `[MatchRecord]` |
 | REST mock | `MockMatchesService`、`MockOddsService` | 從 bundled JSON fixtures 讀取 matches 與 initial odds |
+| WebSocket service | `MockOddsWebSocketService`、`OddsWebSocketServiceProtocol` | Provider-facing connect/disconnect boundary，包裝 WebSocket client |
 | WebSocket mock | `MockOddsWebSocketClient`、`OddsWebSocketEvent` | 使用 `Timer` 模擬 live odds batch updates |
 | Store | `OddsStore`、`Snapshot` | `OddsStore` 提供 actor-isolated canonical state；`Snapshot` 管理 records、lookup index、ordering 與 mutation |
 | Policy | `ReconnectPolicy` | reconnect delay、jitter 與 retry limit |
@@ -58,15 +59,18 @@ subscriber calls stream()
 
 ```text
 LiveOddsProvider.startLiveUpdatesIfNeeded(matchIDs:)
-  -> MockOddsWebSocketClient.connect(matchIDs:)
-      -> yields .connected
-      -> Timer repeats every second
-      -> yields .oddsUpdated([OddsUpdateDTO])
+  -> MockOddsWebSocketService.connect(matchIDs:)
+      -> MockOddsWebSocketClient.connect(matchIDs:)
+          -> yields .connected
+          -> Timer repeats every second
+          -> yields .oddsUpdated([OddsUpdateDTO])
   -> LiveOddsProvider.handleOddsUpdates(_:)
       -> OddsStore.applyOddsUpdates(_:)
           -> Snapshot.applyOddsUpdates(_:)
       -> emit oddsUpdated(changedRecords:) when known records changed
 ```
+
+`MockOddsWebSocketService` 目前只保留 provider-facing boundary，`connect(matchIDs:)` 與 `disconnect()` 委派給 `MockOddsWebSocketClient`，不重設 channel lifecycle。
 
 `MockOddsWebSocketClient` 目前：
 
@@ -94,7 +98,7 @@ Subscriber lifecycle：
 
 1. 每次 `stream()` 建立一個 subscriber ID 與 continuation。
 2. continuation termination 會移除 subscriber。
-3. subscriber count 歸零時，provider 取消 refresh task、停止 live updates 並呼叫 `disconnect()`。
+3. subscriber count 歸零時，provider 取消 refresh task、停止 live updates 並呼叫 WebSocket service `disconnect()`。
 4. provider deinit 時會停止 live updates、取消 refresh task 並 finish 所有 continuation。
 
 ## Reconnect Behavior
@@ -117,6 +121,7 @@ Subscriber lifecycle：
 |:---|:---|
 | `LiveOddsProviderTests.swift` | initial load、cached snapshot、unknown update、stream cancellation、reconnect max attempts |
 | `RecordsRepositoryTests.swift` | parallel fetch、API failure propagation、mapper invocation、output records |
+| `MockOddsWebSocketServiceTests.swift` | connect/disconnect delegation、event forwarding |
 | `MockOddsWebSocketClientTests.swift` | batch IDs、empty IDs、connected event、disconnect finishes stream |
 | `SnapshotTests.swift` | upsert、remove、ordering、lookup、replace、apply |
 | `OddsStoreTests.swift` | known/unknown odds updates、replace all、snapshot |
