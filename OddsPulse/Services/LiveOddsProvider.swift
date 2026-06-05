@@ -23,8 +23,7 @@ enum LiveOddsFeedStatus: Equatable {
 
 @MainActor
 final class LiveOddsProvider: LiveOddsProviderProtocol {
-    private let matchesService: MatchesServiceProtocol
-    private let oddsService: OddsServiceProtocol
+    private let recordsRepository: RecordsRepositoryProtocol
     private let oddsWebSocketClient: OddsWebSocketClientProtocol
     private let oddsStore: OddsStoreProtocol
     private let reconnectPolicy: ReconnectPolicy
@@ -35,14 +34,12 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
     private var reconnectAttempt = 0
 
     init(
-        matchesService: MatchesServiceProtocol? = nil,
-        oddsService: OddsServiceProtocol? = nil,
+        recordsRepository: RecordsRepositoryProtocol? = nil,
         oddsWebSocketClient: OddsWebSocketClientProtocol? = nil,
         oddsStore: OddsStoreProtocol? = nil,
         reconnectPolicy: ReconnectPolicy = .default
     ) {
-        self.matchesService = matchesService ?? MockMatchesService()
-        self.oddsService = oddsService ?? MockOddsService()
+        self.recordsRepository = recordsRepository ?? RecordsRepository()
         self.oddsWebSocketClient = oddsWebSocketClient ?? MockOddsWebSocketClient()
         self.oddsStore = oddsStore ?? OddsStore()
         self.reconnectPolicy = reconnectPolicy
@@ -100,13 +97,7 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
         }
 
         do {
-            async let matches = matchesService.fetchMatches()
-            async let odds = oddsService.fetchInitialOdds()
-
-            let records = try MatchRecordMapper.makeRecords(
-                matches: try await matches,
-                odds: try await odds
-            )
+            let records = try await recordsRepository.fetchRecords()
             await oddsStore.replaceRecords(records)
             broadcast(.recordsLoaded(records))
             startLiveUpdatesIfNeeded(matchIDs: records.map(\.matchID))

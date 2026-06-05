@@ -6,7 +6,8 @@
 
 | 類別 | 主要型別 | 職責 |
 |:---|:---|:---|
-| Provider | `LiveOddsProvider`、`LiveOddsProviderProtocol` | odds 資料單一入口，管理 initial load、live feed、cache、subscriber count 與 reconnect |
+| Provider | `LiveOddsProvider`、`LiveOddsProviderProtocol` | odds 資料單一入口，管理 cache-first flow、background refresh trigger、live feed、store updates、subscriber count 與 reconnect |
+| Repository | `RecordsRepository`、`RecordsRepositoryProtocol` | 平行呼叫 REST mock services、執行 mapper，回傳 `[MatchRecord]` |
 | REST mock | `MockMatchesService`、`MockOddsService` | 從 bundled JSON fixtures 讀取 matches 與 initial odds |
 | WebSocket mock | `MockOddsWebSocketClient`、`OddsWebSocketEvent` | 使用 `Timer` 模擬 live odds batch updates |
 | Store | `OddsStore`、`Snapshot` | `OddsStore` 提供 actor-isolated canonical state；`Snapshot` 管理 records、lookup index、ordering 與 mutation |
@@ -41,9 +42,10 @@ subscriber calls stream()
   -> OddsStore.snapshot()
       -> if snapshot exists: emit recordsLoaded(snapshot.records)
       -> if empty: emit loading
-      -> async let matchesService.fetchMatches()
-      -> async let oddsService.fetchInitialOdds()
-      -> MatchRecordMapper.makeRecords(matches:odds:)
+      -> RecordsRepository.fetchRecords()
+          -> async let matchesService.fetchMatches()
+          -> async let oddsService.fetchInitialOdds()
+          -> MatchRecordMapper.makeRecords(matches:odds:)
       -> OddsStore.replaceRecords(records)
           -> Snapshot.replaceRecords(records)
       -> emit recordsLoaded(records)
@@ -114,6 +116,7 @@ Subscriber lifecycle：
 | Test file | 覆蓋範圍 |
 |:---|:---|
 | `LiveOddsProviderTests.swift` | initial load、cached snapshot、unknown update、stream cancellation、reconnect max attempts |
+| `RecordsRepositoryTests.swift` | parallel fetch、API failure propagation、mapper invocation、output records |
 | `MockOddsWebSocketClientTests.swift` | batch IDs、empty IDs、connected event、disconnect finishes stream |
 | `SnapshotTests.swift` | upsert、remove、ordering、lookup、replace、apply |
 | `OddsStoreTests.swift` | known/unknown odds updates、replace all、snapshot |

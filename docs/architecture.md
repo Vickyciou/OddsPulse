@@ -6,20 +6,21 @@
 
 ## Current Baseline
 
-OddsPulse 使用 UIKit programmatic UI 與 MVVM。REST mock、WebSocket mock、thread-safe cache 與 reconnect 策略集中在 `LiveOddsProvider`，ViewModel 只消費 provider event 並轉成畫面狀態。`OddsStore` actor 持有 `Snapshot`，讓 actor isolation 與 records/index/ordering 資料結構責任分離。
+OddsPulse 使用 UIKit programmatic UI 與 MVVM。`LiveOddsProvider` 管理 cache-first flow、background refresh、WebSocket subscription、store updates 與 event emission；REST orchestration 與 mapper invocation 由 `RecordsRepository` 負責。`OddsStore` actor 持有 `Snapshot`，讓 actor isolation 與 records/index/ordering 資料結構責任分離。
 
 ## Current Data Flow
 
 ```text
 Mock REST services
-  -> LiveOddsProvider
+  -> RecordsRepository
       -> MatchRecordMapper
-      -> OddsStore actor
-          -> Snapshot
-          -> LiveOddsEvent.recordsLoaded
-              -> MatchesViewModel
-                  -> MatchesViewController
-                      -> UITableView cells
+      -> LiveOddsProvider
+          -> OddsStore actor
+              -> Snapshot
+              -> LiveOddsEvent.recordsLoaded
+                  -> MatchesViewModel
+                      -> MatchesViewController
+                          -> UITableView cells
 
 Mock WebSocket stream
   -> MockOddsWebSocketClient (Timer)
@@ -69,13 +70,14 @@ enum LiveOddsFeedStatus: Equatable {
 
 1. ViewModel 訂閱 `LiveOddsProvider.stream()`。
 2. Provider 先讀 `OddsStore.snapshot()`；若 snapshot 不空，立即 emit `.recordsLoaded(snapshot.records)` 讓 UI 先呈現 cached data。
-3. Provider 不論 snapshot 是否存在，都會平行請求 mock `/matches` 與 mock `/odds`；只有 snapshot 為空時才先 emit `.loading`。
-4. `MatchRecordMapper` 使用 `matchID` 將比賽基本資料與初始賠率合併，依 `startTime` 升序排序；時間相同時用 `matchID` 作 deterministic tie-breaker。
-5. Provider 將 records 寫入 `OddsStore`，再 emit `.recordsLoaded(records)`。
-6. Provider 啟動 `MockOddsWebSocketClient`，並 emit feed status。
-7. WebSocket 每秒產生 1-10 筆 odds update batch；同一 batch 內避免重複 `matchID`。
-8. Provider 將 odds updates 套用到 `OddsStore`，只把 changed records 透過 `.oddsUpdated(changedRecords:)` emit 給 ViewModel。
-9. ViewModel 將 changed records 轉成 row view models，產生 row-level update intent，ViewController 只更新受影響的 row。
+3. Provider 不論 snapshot 是否存在，都會呼叫 `RecordsRepository.fetchRecords()`；只有 snapshot 為空時才先 emit `.loading`。
+4. `RecordsRepository` 平行請求 mock `/matches` 與 mock `/odds`，再呼叫 mapper 組成 records。
+5. `MatchRecordMapper` 使用 `matchID` 將比賽基本資料與初始賠率合併，依 `startTime` 升序排序；時間相同時用 `matchID` 作 deterministic tie-breaker。
+6. Provider 將 records 寫入 `OddsStore`，再 emit `.recordsLoaded(records)`。
+7. Provider 啟動 `MockOddsWebSocketClient`，並 emit feed status。
+8. WebSocket 每秒產生 1-10 筆 odds update batch；同一 batch 內避免重複 `matchID`。
+9. Provider 將 odds updates 套用到 `OddsStore`，只把 changed records 透過 `.oddsUpdated(changedRecords:)` emit 給 ViewModel。
+10. ViewModel 將 changed records 轉成 row view models，產生 row-level update intent，ViewController 只更新受影響的 row。
 
 ## Cache Scope
 
@@ -105,7 +107,8 @@ enum LiveOddsFeedStatus: Equatable {
 |:---|:---|
 | ViewController | 建立 UIKit view、綁定 ViewModel output、維護 table rows 並套用 row updates |
 | ViewModel | 訂閱 `LiveOddsProvider`、管理畫面狀態、維護 `displayRows` 與 `matchID -> row index`，將 provider event 轉成 row update |
-| LiveOddsProvider | 統一資料來源，管理 snapshot cache-first flow、API refresh、WebSocket lifecycle、subscriber count 與 reconnect |
+| LiveOddsProvider | 統一資料來源，管理 snapshot cache-first flow、background refresh trigger、WebSocket lifecycle、subscriber count、store updates、event emission 與 reconnect |
+| RecordsRepository | 平行請求 `/matches` 與 `/odds`，呼叫 mapper，回傳 `[MatchRecord]`；不處理 cache、store、WebSocket 或 UI event |
 | Service / WebSocket Client | 模擬 `/matches`、`/odds` 與 WebSocket odds update |
 | OddsStoreProtocol / OddsStore actor | 保護共享 match/odds state，確保 thread-safe，持有並替換 `Snapshot`。`LiveOddsProvider` 依賴 protocol，便於單元測試注入 fake |
 | Snapshot | 管理 records storage、lookup index、ordering、replace、upsert、remove 與 partial odds updates；不處理 API、WebSocket、business 或 UI 邏輯 |
@@ -172,6 +175,7 @@ Live odds updates 由 `MockOddsWebSocketClient` 產生，client 持有 `Timer` �
 |:---|:---|
 | Sorting | `MatchRecordMapperTests.swift` 驗證 `startTime` 升序與 deterministic tie-breaker |
 | Merge logic | `MatchRecordMapperTests.swift` 驗證 matches + initial odds 合併、缺少 odds、未知 odds 與 invalid start time |
+| Repository | `RecordsRepositoryTests.swift` 驗證 parallel fetch、API failure propagation、mapper invocation 與 output records |
 | Snapshot | `SnapshotTests.swift` 驗證 upsert、remove、ordering、lookup、replace 與 apply |
 | Odds update | `OddsStoreTests.swift` 驗證 known / unknown odds updates、replace all 與 snapshot |
 | WebSocket batch | `MockOddsWebSocketClientTests.swift` 驗證 batch match IDs、empty IDs、connected event 與 disconnect stream finish |

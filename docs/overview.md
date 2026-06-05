@@ -12,7 +12,7 @@
 | Core screen | Matches list with live odds updates |
 | Data source | bundled JSON fixtures + mock WebSocket timer |
 | State safety | `OddsStore` actor 持有 `Snapshot`，由 actor 保護 canonical match/odds state |
-| Tests | XCTest 覆蓋 mapping、snapshot、store、WebSocket、provider、ViewModel、reconnect policy |
+| Tests | XCTest 覆蓋 mapping、repository、snapshot、store、WebSocket、provider、ViewModel、reconnect policy |
 
 ## Current Implementation Status
 
@@ -20,7 +20,7 @@
 |:---|:---|
 | Programmatic app root | `SceneDelegate` 建立 `UINavigationController` 與 `MatchesViewController` |
 | Shared dependencies | `SceneDependencies` 持有 scene/session scope 的 `LiveOddsProviderProtocol` |
-| Initial data load | `LiveOddsProvider` 平行呼叫 mock matches 與 odds services |
+| Initial data load | `LiveOddsProvider` 呼叫 `RecordsRepository`；repository 平行呼叫 mock matches 與 odds services 並執行 mapping |
 | Live odds feed | `MockOddsWebSocketClient` 以 `Timer` 產生 `AsyncStream<OddsWebSocketEvent>` |
 | Thread-safe state | `OddsStore` actor 提供 snapshot 與 partial odds update，內部資料結構由 `Snapshot` 管理 |
 | UI state | `MatchesViewModel` 將 provider events 轉成 view state 與 row update intent |

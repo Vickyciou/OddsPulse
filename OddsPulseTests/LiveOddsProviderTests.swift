@@ -5,19 +5,14 @@ import XCTest
 final class LiveOddsProviderTests: XCTestCase {
     func testFirstSubscriberReceivesLoadingRefreshAndLiveConnectionEvents() async throws {
         // 準備
-        let matchesService = FakeMatchesService(matches: [
-            makeMatch(matchID: 1002, startTime: "2026-01-02T12:00:00Z"),
-            makeMatch(matchID: 1001, startTime: "2026-01-01T12:00:00Z")
-        ])
-        let oddsService = FakeOddsService(odds: [
-            makeOdds(matchID: 1001, teamAOdds: 1.50, teamBOdds: 2.50),
-            makeOdds(matchID: 1002, teamAOdds: 1.80, teamBOdds: 2.10)
+        let recordsRepository = FakeRecordsRepository(records: [
+            makeRecord(matchID: 1001),
+            makeRecord(matchID: 1002)
         ])
         let store = FakeOddsStore()
         let webSocketClient = ControllableOddsWebSocketClient()
         let provider = makeProvider(
-            matchesService: matchesService,
-            oddsService: oddsService,
+            recordsRepository: recordsRepository,
             webSocketClient: webSocketClient,
             store: store
         )
@@ -27,8 +22,7 @@ final class LiveOddsProviderTests: XCTestCase {
         let initialEvents = try await eventCollector.collectNextEvents(count: 3, in: self)
         webSocketClient.send(.connected)
         let liveEvents = try await eventCollector.collectNextEvents(count: 1, in: self)
-        let matchesFetchCount = await matchesService.fetchCallCount()
-        let oddsFetchCount = await oddsService.fetchCallCount()
+        let recordsFetchCount = await recordsRepository.fetchCallCount()
 
         // 驗證
         guard case let .recordsLoaded(loadedRecords) = initialEvents[1] else {
@@ -39,8 +33,7 @@ final class LiveOddsProviderTests: XCTestCase {
         XCTAssertEqual(loadedRecords.map(\.matchID), [1001, 1002])
         XCTAssertEqual(initialEvents[2], .feedStatusChanged(.connecting))
         XCTAssertEqual(liveEvents, [.feedStatusChanged(.live)])
-        XCTAssertEqual(matchesFetchCount, 1)
-        XCTAssertEqual(oddsFetchCount, 1)
+        XCTAssertEqual(recordsFetchCount, 1)
         XCTAssertEqual(webSocketClient.connectCallCount, 1)
         XCTAssertEqual(webSocketClient.connectedMatchIDsHistory, [[1001, 1002]])
         XCTAssertEqual(store.replaceRecordsCallCount, 1)
@@ -49,10 +42,10 @@ final class LiveOddsProviderTests: XCTestCase {
 
     func testRefreshFailureDoesNotConnectWebSocket() async throws {
         // 準備
-        let matchesService = FakeMatchesService(result: .failure(TestError.expected))
+        let recordsRepository = FakeRecordsRepository(result: .failure(TestError.expected))
         let webSocketClient = ControllableOddsWebSocketClient()
         let provider = makeProvider(
-            matchesService: matchesService,
+            recordsRepository: recordsRepository,
             webSocketClient: webSocketClient
         )
 
@@ -67,14 +60,12 @@ final class LiveOddsProviderTests: XCTestCase {
         XCTAssertEqual(webSocketClient.connectCallCount, 0)
     }
 
-    func testMappingFailureDoesNotConnectWebSocket() async throws {
+    func testRepositoryFailureDoesNotConnectWebSocket() async throws {
         // 準備
-        let matchesService = FakeMatchesService(matches: [
-            makeMatch(matchID: 1001, startTime: "not-a-date")
-        ])
+        let recordsRepository = FakeRecordsRepository(result: .failure(TestError.expected))
         let webSocketClient = ControllableOddsWebSocketClient()
         let provider = makeProvider(
-            matchesService: matchesService,
+            recordsRepository: recordsRepository,
             webSocketClient: webSocketClient
         )
 
@@ -96,16 +87,12 @@ final class LiveOddsProviderTests: XCTestCase {
             makeRecord(matchID: 1001),
             makeRecord(matchID: 1002)
         ]
-        let matchesService = FakeMatchesService(matches: [
-            makeMatch(matchID: 9999)
-        ])
-        let oddsService = FakeOddsService(odds: [
-            makeOdds(matchID: 9999)
+        let recordsRepository = FakeRecordsRepository(records: [
+            makeRecord(matchID: 9999)
         ])
         let webSocketClient = ControllableOddsWebSocketClient()
         let provider = makeProvider(
-            matchesService: matchesService,
-            oddsService: oddsService,
+            recordsRepository: recordsRepository,
             webSocketClient: webSocketClient,
             store: store
         )
@@ -318,19 +305,15 @@ private extension LiveOddsProviderTests {
     }
 
     func makeProvider(
-        matchesService: MatchesServiceProtocol? = nil,
-        oddsService: OddsServiceProtocol? = nil,
+        recordsRepository: RecordsRepositoryProtocol? = nil,
         webSocketClient: ControllableOddsWebSocketClient? = nil,
         store: OddsStoreProtocol = FakeOddsStore(),
         reconnectPolicy: ReconnectPolicy = .test
     ) -> LiveOddsProvider {
         let webSocketClient = webSocketClient ?? ControllableOddsWebSocketClient()
         return LiveOddsProvider(
-            matchesService: matchesService ?? FakeMatchesService(matches: [
-                makeMatch(matchID: 1001)
-            ]),
-            oddsService: oddsService ?? FakeOddsService(odds: [
-                makeOdds(matchID: 1001)
+            recordsRepository: recordsRepository ?? FakeRecordsRepository(records: [
+                makeRecord(matchID: 1001)
             ]),
             oddsWebSocketClient: webSocketClient,
             oddsStore: store,
@@ -345,8 +328,9 @@ private extension LiveOddsProviderTests {
         let store = FakeOddsStore()
         let webSocketClient = ControllableOddsWebSocketClient()
         let provider = makeProvider(
-            matchesService: FakeMatchesService(matches: matchIDs.map { makeMatch(matchID: $0) }),
-            oddsService: FakeOddsService(odds: matchIDs.map { makeOdds(matchID: $0) }),
+            recordsRepository: FakeRecordsRepository(
+                records: matchIDs.map { makeRecord(matchID: $0, oddsState: .available(teamAOdds: 1.50, teamBOdds: 2.50)) }
+            ),
             webSocketClient: webSocketClient,
             store: store,
             reconnectPolicy: reconnectPolicy
@@ -382,39 +366,16 @@ private extension LiveOddsProviderTests {
         throw EventCollectionError.missingEvents
     }
 
-    func makeMatch(
+    func makeRecord(
         matchID: Int,
-        teamA: String = "Eagles",
-        teamB: String = "Tigers",
-        startTime: String = "2026-01-01T12:00:00Z"
-    ) -> MatchResponseDTO {
-        MatchResponseDTO(
-            matchID: matchID,
-            teamA: teamA,
-            teamB: teamB,
-            startTime: startTime
-        )
-    }
-
-    func makeOdds(
-        matchID: Int,
-        teamAOdds: Decimal = 1.50,
-        teamBOdds: Decimal = 2.50
-    ) -> OddsResponseDTO {
-        OddsResponseDTO(
-            matchID: matchID,
-            teamAOdds: teamAOdds,
-            teamBOdds: teamBOdds
-        )
-    }
-
-    func makeRecord(matchID: Int) -> MatchRecord {
+        oddsState: OddsState = .unavailable
+    ) -> MatchRecord {
         MatchRecord(
             matchID: matchID,
             teamA: "Eagles",
             teamB: "Tigers",
             startTime: Date(timeIntervalSince1970: TimeInterval(matchID)),
-            oddsState: .unavailable
+            oddsState: oddsState
         )
     }
 }
@@ -502,41 +463,19 @@ private struct EventExpectation {
     let expectation: XCTestExpectation
 }
 
-private actor FakeMatchesService: MatchesServiceProtocol {
-    private let result: Result<[MatchResponseDTO], Error>
+private actor FakeRecordsRepository: RecordsRepositoryProtocol {
+    private let result: Result<[MatchRecord], Error>
     private(set) var fetchCount = 0
 
-    init(matches: [MatchResponseDTO]) {
-        result = .success(matches)
+    init(records: [MatchRecord]) {
+        result = .success(records)
     }
 
-    init(result: Result<[MatchResponseDTO], Error>) {
+    init(result: Result<[MatchRecord], Error>) {
         self.result = result
     }
 
-    func fetchMatches() async throws -> [MatchResponseDTO] {
-        fetchCount += 1
-        return try result.get()
-    }
-
-    func fetchCallCount() -> Int {
-        fetchCount
-    }
-}
-
-private actor FakeOddsService: OddsServiceProtocol {
-    private let result: Result<[OddsResponseDTO], Error>
-    private(set) var fetchCount = 0
-
-    init(odds: [OddsResponseDTO]) {
-        result = .success(odds)
-    }
-
-    init(result: Result<[OddsResponseDTO], Error>) {
-        self.result = result
-    }
-
-    func fetchInitialOdds() async throws -> [OddsResponseDTO] {
+    func fetchRecords() async throws -> [MatchRecord] {
         fetchCount += 1
         return try result.get()
     }

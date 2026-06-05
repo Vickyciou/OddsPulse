@@ -42,6 +42,7 @@ xcodebuild test -project OddsPulse.xcodeproj -scheme OddsPulse -destination 'pla
 | Test file | 覆蓋範圍 |
 |:---|:---|
 | `MatchRecordMapperTests.swift` | start time 排序、缺少 odds、未知 odds、invalid start time |
+| `RecordsRepositoryTests.swift` | parallel fetch、API failure propagation、mapper invocation、output records |
 | `MatchRowViewModelMapperTests.swift` | unavailable odds 顯示 |
 | `SnapshotTests.swift` | upsert、remove、ordering、lookup、replace、apply |
 | `OddsStoreTests.swift` | known/unknown odds updates、replace all、snapshot |

@@ -1,10 +1,10 @@
 import Foundation
 
-protocol OddsServiceProtocol: Sendable {
+nonisolated protocol OddsServiceProtocol: Sendable {
     func fetchInitialOdds() async throws -> [OddsResponseDTO]
 }
 
-struct MockOddsService: OddsServiceProtocol {
+nonisolated struct MockOddsService: OddsServiceProtocol {
     private enum Constants {
         static let resourceName = "odds"
         static let fileExtension = "json"

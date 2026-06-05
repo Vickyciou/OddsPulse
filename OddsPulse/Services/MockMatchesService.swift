@@ -1,10 +1,10 @@
 import Foundation
 
-protocol MatchesServiceProtocol: Sendable {
+nonisolated protocol MatchesServiceProtocol: Sendable {
     func fetchMatches() async throws -> [MatchResponseDTO]
 }
 
-struct MockMatchesService: MatchesServiceProtocol {
+nonisolated struct MockMatchesService: MatchesServiceProtocol {
     private enum Constants {
         static let resourceName = "matches"
         static let fileExtension = "json"

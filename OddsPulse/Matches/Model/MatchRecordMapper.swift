@@ -1,7 +1,7 @@
 import Foundation
 
-enum MatchRecordMapper {
-    enum MappingError: Error, Equatable {
+nonisolated enum MatchRecordMapper {
+    nonisolated enum MappingError: Error, Equatable {
         case invalidStartTime(matchID: Int, value: String)
     }
 

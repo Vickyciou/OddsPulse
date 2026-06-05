@@ -1,14 +1,14 @@
 import Foundation
 
-protocol ResourceLoading: Sendable {
+nonisolated protocol ResourceLoading: Sendable {
     func data(resourceName: String, fileExtension: String) throws -> Data
 }
 
-enum ResourceLoadingError: Error, Equatable {
+nonisolated enum ResourceLoadingError: Error, Equatable {
     case missingResource(name: String, fileExtension: String)
 }
 
-struct BundleResourceLoader: ResourceLoading {
+nonisolated struct BundleResourceLoader: ResourceLoading {
     private let bundle: Bundle
 
     init(bundle: Bundle = .main) {
