@@ -6,7 +6,7 @@
 
 ## Current Baseline
 
-OddsPulse 使用 UIKit programmatic UI 與 MVVM。REST mock、WebSocket mock、thread-safe cache 與 reconnect 策略集中在 `LiveOddsProvider`，ViewModel 只消費 provider event 並轉成畫面狀態。
+OddsPulse 使用 UIKit programmatic UI 與 MVVM。REST mock、WebSocket mock、thread-safe cache 與 reconnect 策略集中在 `LiveOddsProvider`，ViewModel 只消費 provider event 並轉成畫面狀態。`OddsStore` actor 持有 `Snapshot`，讓 actor isolation 與 records/index/ordering 資料結構責任分離。
 
 ## Current Data Flow
 
@@ -15,6 +15,7 @@ Mock REST services
   -> LiveOddsProvider
       -> MatchRecordMapper
       -> OddsStore actor
+          -> Snapshot
           -> LiveOddsEvent.recordsLoaded
               -> MatchesViewModel
                   -> MatchesViewController
@@ -24,6 +25,7 @@ Mock WebSocket stream
   -> MockOddsWebSocketClient (Timer)
       -> LiveOddsProvider
           -> OddsStore actor
+              -> Snapshot
               -> LiveOddsEvent.oddsUpdated
                   -> MatchesViewModel
                       -> row-level update intent
@@ -80,6 +82,7 @@ enum LiveOddsFeedStatus: Equatable {
 本專案的快取是 in-memory scene/session cache：
 
 - `LiveOddsProvider` 內部持有 `OddsStore actor`。
+- `OddsStore` actor 內部持有 `Snapshot`，由 `Snapshot` 管理 records、lookup index、ordering 與 odds update mutation。
 - `SceneDependencies` 持有 shared `LiveOddsProviderProtocol`，讓同一個 scene 內新建立的 ViewModel 訂閱同一份 provider。
 - 切換畫面後，新 ViewModel 可立即從 provider 收到 store snapshot，不需等待 `/matches` 與 `/odds` 重新完成。
 - WebSocket 更新會寫回同一個 store，因此快速恢復顯示時會包含最新 WebSocket-applied odds。
@@ -102,14 +105,15 @@ enum LiveOddsFeedStatus: Equatable {
 |:---|:---|
 | ViewController | 建立 UIKit view、綁定 ViewModel output、維護 table rows 並套用 row updates |
 | ViewModel | 訂閱 `LiveOddsProvider`、管理畫面狀態、維護 `displayRows` 與 `matchID -> row index`，將 provider event 轉成 row update |
-| LiveOddsProvider | 統一資料來源，管理 snapshot、API refresh、WebSocket lifecycle、subscriber count 與 reconnect |
+| LiveOddsProvider | 統一資料來源，管理 snapshot cache-first flow、API refresh、WebSocket lifecycle、subscriber count 與 reconnect |
 | Service / WebSocket Client | 模擬 `/matches`、`/odds` 與 WebSocket odds update |
-| OddsStoreProtocol / OddsStore actor | 保護共享 match/odds state，確保 thread-safe，提供 snapshot 並套用 partial odds updates。`LiveOddsProvider` 依賴 protocol，便於單元測試注入 fake |
+| OddsStoreProtocol / OddsStore actor | 保護共享 match/odds state，確保 thread-safe，持有並替換 `Snapshot`。`LiveOddsProvider` 依賴 protocol，便於單元測試注入 fake |
+| Snapshot | 管理 records storage、lookup index、ordering、replace、upsert、remove 與 partial odds updates；不處理 API、WebSocket、business 或 UI 邏輯 |
 | Models | 定義 API/mock model、domain model 與 UI display model |
 
 ## State Ownership
 
-- 比賽與賠率的 canonical state 由 `OddsStore` actor 管理。
+- 比賽與賠率的 canonical state 由 `OddsStore` actor 管理，實際 records/index/ordering 儲存在 `Snapshot`。
 - `OddsStore` 由 `LiveOddsProvider` 持有，是 provider 的 implementation detail。
 - `SceneDependencies` 只持有 shared provider，避免 ViewModel 或 SceneDelegate 直接接觸 store。
 - `MatchesViewModel` 標記為 `@MainActor`，持有畫面需要的 display state，不直接暴露 mutable model。
@@ -128,7 +132,7 @@ enum LiveOddsFeedStatus: Equatable {
 
 Live odds updates 由 `MockOddsWebSocketClient` 產生，client 持有 `Timer` 並透過 `AsyncStream<OddsWebSocketEvent>` 送出 `[OddsUpdateDTO]` batch。
 `LiveOddsProvider` 收到 batch 後交給 `OddsStore` actor 更新 canonical match/odds state。
-`OddsStore` 會序列化資料修改、忽略未知 `matchID`，並回傳已更新的 `MatchRecord`。
+`OddsStore` 在 actor isolation 內委派 `Snapshot` 套用資料修改、忽略未知 `matchID`，並回傳已更新的 `MatchRecord`。
 由於 `MatchesViewModel` 是 `@MainActor`，它會安全地消費 provider event，把 `MatchRecord` 轉成 `MatchRowViewModel`、更新 `displayRows`，再送出 row update intent。
 `MatchesViewController` 只負責把這些 row updates 套用到 table view，因此 live odds 更新不需要整頁 `reloadData()`。
 
@@ -168,6 +172,7 @@ Live odds updates 由 `MockOddsWebSocketClient` 產生，client 持有 `Timer` �
 |:---|:---|
 | Sorting | `MatchRecordMapperTests.swift` 驗證 `startTime` 升序與 deterministic tie-breaker |
 | Merge logic | `MatchRecordMapperTests.swift` 驗證 matches + initial odds 合併、缺少 odds、未知 odds 與 invalid start time |
+| Snapshot | `SnapshotTests.swift` 驗證 upsert、remove、ordering、lookup、replace 與 apply |
 | Odds update | `OddsStoreTests.swift` 驗證 known / unknown odds updates、replace all 與 snapshot |
 | WebSocket batch | `MockOddsWebSocketClientTests.swift` 驗證 batch match IDs、empty IDs、connected event 與 disconnect stream finish |
 | Provider output | `LiveOddsProviderTests.swift` 驗證 initial load、cached snapshot、unknown update、subscriber cancellation 與 reconnect max attempts |

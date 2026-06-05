@@ -1,6 +1,6 @@
 import Foundation
 
-struct MatchResponseDTO: Decodable, Equatable, Sendable {
+nonisolated struct MatchResponseDTO: Decodable, Equatable, Sendable {
     let matchID: Int
     let teamA: String
     let teamB: String

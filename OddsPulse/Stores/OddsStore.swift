@@ -1,6 +1,6 @@
 import Foundation
 
-struct UpdateResult: Equatable {
+nonisolated struct UpdateResult: Equatable, Sendable {
     let changedRecords: [MatchRecord]
     let unknownMatchIDs: [Int]
 }
@@ -12,42 +12,17 @@ protocol OddsStoreProtocol: AnyObject {
 }
 
 actor OddsStore: OddsStoreProtocol {
-    private var records: [MatchRecord] = []
-    private var indexByMatchID: [Int: Int] = [:]
+    private var currentSnapshot = Snapshot()
 
     func replaceRecords(_ records: [MatchRecord]) {
-        self.records = records
-        indexByMatchID = Dictionary(
-            uniqueKeysWithValues: records.enumerated().map { index, record in
-                (record.matchID, index)
-            }
-        )
+        currentSnapshot.replaceRecords(records)
     }
 
     func snapshot() -> [MatchRecord] {
-        records
+        currentSnapshot.orderedRecords
     }
 
     func applyOddsUpdates(_ updates: [OddsUpdateDTO]) -> UpdateResult {
-        var changedRecords: [MatchRecord] = []
-        var unknownMatchIDs: [Int] = []
-
-        for update in updates {
-            guard let index = indexByMatchID[update.matchID] else {
-                unknownMatchIDs.append(update.matchID)
-                continue
-            }
-
-            records[index].oddsState = .available(
-                teamAOdds: update.teamAOdds,
-                teamBOdds: update.teamBOdds
-            )
-            changedRecords.append(records[index])
-        }
-
-        return UpdateResult(
-            changedRecords: changedRecords,
-            unknownMatchIDs: unknownMatchIDs
-        )
+        currentSnapshot.applyOddsUpdates(updates)
     }
 }

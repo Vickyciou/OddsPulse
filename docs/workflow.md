@@ -43,6 +43,7 @@ xcodebuild test -project OddsPulse.xcodeproj -scheme OddsPulse -destination 'pla
 |:---|:---|
 | `MatchRecordMapperTests.swift` | start time 排序、缺少 odds、未知 odds、invalid start time |
 | `MatchRowViewModelMapperTests.swift` | unavailable odds 顯示 |
+| `SnapshotTests.swift` | upsert、remove、ordering、lookup、replace、apply |
 | `OddsStoreTests.swift` | known/unknown odds updates、replace all、snapshot |
 | `MockOddsWebSocketClientTests.swift` | batch match IDs、empty IDs、connected event、disconnect finishes stream |
 | `LiveOddsProviderTests.swift` | initial load、cached snapshot、unknown update、subscriber cancellation、reconnect max attempts |

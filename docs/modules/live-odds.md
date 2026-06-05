@@ -9,7 +9,7 @@
 | Provider | `LiveOddsProvider`、`LiveOddsProviderProtocol` | odds 資料單一入口，管理 initial load、live feed、cache、subscriber count 與 reconnect |
 | REST mock | `MockMatchesService`、`MockOddsService` | 從 bundled JSON fixtures 讀取 matches 與 initial odds |
 | WebSocket mock | `MockOddsWebSocketClient`、`OddsWebSocketEvent` | 使用 `Timer` 模擬 live odds batch updates |
-| Store | `OddsStore` | actor-isolated canonical match/odds state |
+| Store | `OddsStore`、`Snapshot` | `OddsStore` 提供 actor-isolated canonical state；`Snapshot` 管理 records、lookup index、ordering 與 mutation |
 | Policy | `ReconnectPolicy` | reconnect delay、jitter 與 retry limit |
 
 ## Public Interface
@@ -45,6 +45,7 @@ subscriber calls stream()
       -> async let oddsService.fetchInitialOdds()
       -> MatchRecordMapper.makeRecords(matches:odds:)
       -> OddsStore.replaceRecords(records)
+          -> Snapshot.replaceRecords(records)
       -> emit recordsLoaded(records)
       -> start live updates
 ```
@@ -61,6 +62,7 @@ LiveOddsProvider.startLiveUpdatesIfNeeded(matchIDs:)
       -> yields .oddsUpdated([OddsUpdateDTO])
   -> LiveOddsProvider.handleOddsUpdates(_:)
       -> OddsStore.applyOddsUpdates(_:)
+          -> Snapshot.applyOddsUpdates(_:)
       -> emit oddsUpdated(changedRecords:) when known records changed
 ```
 
@@ -82,7 +84,8 @@ LiveOddsProvider.startLiveUpdatesIfNeeded(matchIDs:)
 SceneDependencies.liveOddsProvider
   -> LiveOddsProvider
       -> OddsStore actor
-          -> records snapshot
+          -> Snapshot
+              -> records snapshot
 ```
 
 Subscriber lifecycle：
@@ -112,5 +115,6 @@ Subscriber lifecycle：
 |:---|:---|
 | `LiveOddsProviderTests.swift` | initial load、cached snapshot、unknown update、stream cancellation、reconnect max attempts |
 | `MockOddsWebSocketClientTests.swift` | batch IDs、empty IDs、connected event、disconnect finishes stream |
+| `SnapshotTests.swift` | upsert、remove、ordering、lookup、replace、apply |
 | `OddsStoreTests.swift` | known/unknown odds updates、replace all、snapshot |
 | `ReconnectPolicyTests.swift` | exponential delay cap、retry limit |

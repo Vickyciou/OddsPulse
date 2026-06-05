@@ -48,7 +48,7 @@ OddsPulse 是 iOS interview homework：即時賽事賠率系統，使用 UIKit p
 
 | 模組 | 文件 | 主要程式碼 |
 |:---|:---|:---|
-| Live odds data pipeline | [`docs/modules/live-odds.md`](docs/modules/live-odds.md) | `Services/`、`Stores/OddsStore.swift` |
+| Live odds data pipeline | [`docs/modules/live-odds.md`](docs/modules/live-odds.md) | `Services/`、`Stores/OddsStore.swift`、`Stores/Snapshot.swift` |
 | Matches UI | [`docs/modules/matches-ui.md`](docs/modules/matches-ui.md) | `Matches/ViewController/`、`Matches/ViewModel/`、`Matches/View/` |
 
 ## Commands

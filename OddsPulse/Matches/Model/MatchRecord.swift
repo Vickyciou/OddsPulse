@@ -1,6 +1,6 @@
 import Foundation
 
-struct MatchRecord: Equatable, Sendable {
+nonisolated struct MatchRecord: Equatable, Sendable {
     let matchID: Int
     let teamA: String
     let teamB: String
