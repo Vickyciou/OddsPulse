@@ -41,4 +41,3 @@ OddsPulse 採用 UIKit programmatic UI 與 MVVM。資料來源由 `LiveOddsProvi
 - `OddsStore` actor 應維持單純 CRUD storage，不理解業務流程；它只負責 thread-safe 地保存、讀取與覆蓋資料。
 - 拆分後可以大幅降低 `LiveOddsProvider` 的責任，更符合 SRP，也能讓 WebSocket state、API loading、odds 更新邏輯與 provider event 輸出分別測試。
 - 這樣可以讓 UI layer 與 data/service layer 的 concurrency boundary 更清楚，也能降低未來改接真實 WebSocket 或真實 API 時的重構成本。
-- 目前 `LiveOddsProvider` 會先送出 `OddsStore` snapshot，再用 API 最新資料刷新；後續可在 ViewModel 對 refresh records 做 diff，資料相同時不通知 UI，只有部分異動時走 row-level update，避免整批 reload 造成畫面閃動或 scroll position 被影響。
