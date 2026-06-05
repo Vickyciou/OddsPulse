@@ -186,3 +186,67 @@ Live odds updates 由 `MockOddsWebSocketService` 對 Provider 暴露 stream，�
 | ViewModel output | `MatchesViewModelTests.swift` 驗證 loading、loaded、failed、row update、feed status 與 stream cancellation |
 | Row formatting | `MatchRowViewModelMapperTests.swift` 驗證 unavailable odds 顯示 |
 | Reconnect policy | `ReconnectPolicyTests.swift` 驗證 delay cap 與 retry limit |
+
+## Architecture Migration Verification
+
+### Migration Baseline Diagram
+
+```text
+LiveOddsProvider
+  -> MatchService / OddsService
+  -> MatchRecordMapper
+  -> OddsStore
+      -> records
+      -> index
+      -> ordering
+      -> update logic
+  -> MockOddsWebSocketClient
+```
+
+### Migrated Architecture Diagram
+
+```text
+LiveOddsProvider
+  -> RecordsRepository
+      -> MatchService / OddsService
+      -> MatchRecordMapper
+  -> OddsStore actor
+      -> Snapshot
+          -> records
+          -> index
+          -> ordering
+          -> CRUD / update logic
+  -> OddsWebSocketServiceProtocol
+      -> MockOddsWebSocketService
+          -> MockOddsWebSocketClient
+```
+
+### Responsibility Matrix
+
+| Component | Responsibilities | Must Not Do |
+|:---|:---|:---|
+| `LiveOddsProvider` | Cache-first flow、background refresh trigger、WebSocket subscription、subscriber lifecycle、store updates、event emission、reconnect policy | Direct API fetching、DTO composition、mapper logic、records/index management、WebSocket client implementation details、UI state |
+| `RecordsRepository` | Parallel API requests、API orchestration、mapper invocation、record composition | Cache、store mutation、WebSocket lifecycle、UI events |
+| `OddsStore` | Actor isolation、snapshot ownership、snapshot replacement、snapshot mutation entry points | API logic、WebSocket lifecycle、business/UI logic、manual records/index management outside `Snapshot` |
+| `Snapshot` | Records storage、CRUD、lookup、index management、ordering、partial odds update mutation | Actor isolation、API logic、WebSocket lifecycle、business/UI logic |
+| `MockOddsWebSocketService` | Provider-facing connect/disconnect boundary、client delegation | Store updates、event emission to ViewModel、API fetching、channel lifecycle redesign |
+| `MockOddsWebSocketClient` | Timer-backed mock feed、batch generation、stream continuation lifecycle | Domain mutation、UI updates、provider retry policy |
+| `MatchesViewModel` | Consume provider events、derive view state、map row updates | API calls、WebSocket connection、store access |
+
+### Remaining Risks
+
+| Risk | Notes |
+|:---|:---|
+| Provider still owns reconnect policy | This preserves existing event order and tests. Moving retry state into WebSocket service would require a new event contract for reconnecting/unavailable status and should be a separate behavior-aware change. |
+| `Snapshot` duplicate `matchID` behavior | `Snapshot` preserves existing `Dictionary(uniqueKeysWithValues:)` behavior, so duplicate records still fail fast instead of being silently deduplicated. |
+| Mock service remains a thin boundary | This is intentional for the current homework scope. It separates Provider from concrete client without introducing a generic WebSocket framework. |
+
+### Future Improvements Evaluation
+
+| Item | Implement Now? | Reason |
+|:---|:---|:---|
+| `activeChannels` | NO | Current app has one live odds feed scoped to the matches list. Channel multiplexing would add lifecycle complexity without current product need. |
+| Delayed disconnect | NO | Existing subscriber-count behavior disconnects immediately and is covered by tests. Delayed disconnect would change cache/feed lifecycle semantics. |
+| `NetworkClient` | NO | Data source is bundled mock JSON. Adding a generic client would violate the migration goal to avoid unnecessary abstraction. |
+| `URLSessionWebSocketTask` | NO | Requirement uses mock Timer-based WebSocket. A real socket task is a future integration concern, not needed for current behavior. |
+| Reducer | NO | Current MVVM state transitions are simple and covered by ViewModel tests. Introducing a reducer would increase abstraction without reducing real complexity. |
