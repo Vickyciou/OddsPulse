@@ -2,33 +2,134 @@
 
 ## 架構概要
 
-OddsPulse 採用 UIKit programmatic UI 與 MVVM。`MatchesViewController` 只負責 UIKit 顯示、binding 與 table view 更新；`MatchesViewModel` 消費 provider event，轉成畫面狀態、row view models 與 row-level update intent。
+OddsPulse 採用 UIKit + MVVM 架構，並將資料取得、狀態管理與即時更新責任拆分為獨立元件。
 
-資料流由 `LiveOddsProvider` 作為 ViewModel 的單一入口。Provider 負責 cache-first flow、refresh orchestration、Store updates、WebSocketService start/stop 與 event emission。`RecordsRepository` 負責 matches / initial odds API orchestration 與 mapper invocation。`MockOddsWebSocketService` 負責 WebSocket connect/disconnect/reconnect、receive loop、connection state 與 socket DTO-to-domain mapping；`MockOddsWebSocketClient` 維持 timer-backed transport/mock feed 角色。
+```text
+MatchesViewController
+    ↓
+MatchesViewModel
+    ↓
+LiveOddsProvider
+    ├── RecordsRepository
+    │      ├── MatchesService
+    │      ├── OddsService
+    │      └── MatchRecordMapper
+    │
+    ├── OddsStore (actor)
+    │      └── Snapshot
+    │
+    └── OddsWebSocketService
+           └── OddsWebSocketClient
+```
 
-### Swift Concurrency / Combine 使用場景
+- MatchesViewController：負責 UI 顯示與使用者互動。
+- MatchesViewModel：將資料轉換為畫面狀態與 Cell ViewModel。
+- LiveOddsProvider：作為 ViewModel 的資料入口，負責 cache-first flow、資料刷新、Store 更新與 WebSocket 訂閱。
+- RecordsRepository：負責取得 Matches 與 Odds API 資料並組合為 Domain Model。
+- OddsStore：維護目前比賽與賠率狀態。
+- OddsWebSocketService：負責 WebSocket 連線、重連與即時賠率更新。
 
-- 目前非同步流程以 Swift Concurrency 為主，尚未使用 Combine。
-- mock REST service 使用 `async throws` 與 `Task.sleep` 模擬延遲，`RecordsRepository` 透過 `async let` 平行取得 matches 與 initial odds。
-- provider 與 mock WebSocket service 使用 `AsyncStream` 表達事件串流，例如 `.recordsLoaded`、`.oddsUpdated`、`.feedStatusChanged`。
-- `Task` 用於長生命週期 observation、資料刷新、live odds loop 與 WebSocketService reconnect backoff；ViewModel 釋放或停止觀察時會 cancel task。
-- `@MainActor` 用於保護 UI 相關狀態與 callback 邊界，確保 ViewModel state 與 ViewController render 都在主執行緒。
+## Data Flow
 
-### Thread-safe 資料存取
+### Initial Load
 
-- 比賽與賠率的 canonical state 由 `OddsStore actor` 管理，包含 records array 與 `matchID` index。
-- 所有 shared odds state 的讀寫都透過 actor method：`replaceRecords(_:)`、`snapshot()`、`applyOddsUpdates(_:)`，由 actor 序列化存取，避免 concurrent mutation。
-- `LiveOddsProvider` 是資料層對 ViewModel 的單一入口；ViewModel 不直接讀寫 `OddsStore`，ViewController 也不直接修改 domain state。
-- WebSocketService 先將 socket DTO 轉成 domain `OddsUpdate`；即時賠率更新進入 provider 後，會交給 `OddsStore.applyOddsUpdates(_:)` 套用，只把已知且實際更新的 `MatchRecord` 回傳給 ViewModel。
-- `LiveOddsProvider` 與 `MatchesViewModel` 目前皆標記為 `@MainActor`，其訂閱者列表、task reference、畫面 state 與 callbacks 不跨執行緒直接 mutate。
-- mock WebSocket 的 `Timer` callback 會切回 `MainActor` 後才送出事件；timer 只負責推播節奏，不直接修改 store 或 UI。
+```text
+Read Snapshot
+    ↓
+Cache Exists?
+├─ Yes → Render Cached Records
+└─ No  → Show Loading
 
-### UI 與 ViewModel 資料綁定
+↓
+Refresh Records
+│
+├─ Success
+│  ↓
+│ Replace Store
+│  ↓
+│ Render Latest Records
+│  ↓
+│ Start WebSocket
+│
+└─ Failure
+   ↓
+   Cached Records Exist?
+   ├─ Yes → Keep Cached Records
+   └─ No  → Show Failed Empty State
+```
 
-- `MatchesViewController.viewDidLoad()` 會先設定 UIKit view hierarchy，再呼叫 `bindViewModel()`，最後由 `viewModel.start()` 開始訂閱 live odds stream。
-- ViewModel 使用 closure output 綁定 UI，而不是 Combine publisher：
-  - `onStateChange`：通知 `.idle`、`.loading`、`.loaded(rows)`、`.failed(message)`，ViewController 依狀態切換 loading、message 與 table。
-  - `onRowIndexesUpdated`：通知 live odds 影響的 row indexes，ViewController 只針對 visible rows 呼叫 `reloadRows(at:with:)`。
-  - `onFeedStatusChange`：通知 live feed 狀態，ViewController 更新連線狀態 label。
-- TableView data source 直接讀取 `viewModel.rows`；初次載入或整體狀態變化使用 `reloadData()`，即時賠率更新則使用 row-level reload，避免整頁刷新。
-- Cell 只接收 `MatchRowViewModel` 並設定 label text，不持有 domain model，也不處理資料更新邏輯。
+### Live Odds Update
+
+```text
+WebSocket Event
+        ↓
+    OddsUpdate
+        ↓
+  OddsStore (actor)
+        ↓
+  Changed Records
+        ↓
+     ViewModel
+        ↓
+ Affected Row Indexes
+        ↓
+  reloadRows(at:)
+```
+
+只有實際變更的比賽資料會通知 UI 更新，因此即時賠率更新時僅重新載入受影響的 Cell，不會整頁 reload。
+
+---
+
+## Swift Concurrency 使用場景
+
+本專案使用 Swift Concurrency 作為主要非同步模型，未使用 Combine。
+
+- async/await：REST API 呼叫。
+- async let：平行取得 Matches 與 Odds 資料。
+- AsyncStream：Provider 與 WebSocket 的事件串流。
+- Task：資料刷新、WebSocket 監聽與重連流程。
+- @MainActor：保護 UI 狀態與 callback 更新。
+
+---
+
+## Thread-safe 資料存取
+
+OddsStore 採用 actor 實作，作為共享資料的唯一存取入口。
+
+所有比賽與賠率資料更新皆透過：
+
+- snapshot()
+- replaceRecords(_:)
+- applyOddsUpdates(_:)
+
+進行，避免多執行緒同時修改資料造成 race condition。
+
+```text
+OddsUpdate
+    ↓
+OddsStore (actor)
+    ↓
+Snapshot Mutation
+    ↓
+Changed Records
+    ↓
+ViewModel
+    ↓
+Reload Affected Rows Only
+```
+
+此外：
+
+- LiveOddsProvider 與 MatchesViewModel 使用 @MainActor 保護 UI 相關狀態。
+- WebSocket DTO 會先於 OddsWebSocketService 轉換為 Domain OddsUpdate。
+- Store 與 Snapshot 不依賴 API DTO 或 WebSocket DTO。
+- UI 不直接讀寫 Store，所有資料流皆透過 Provider 協調。
+
+---
+
+## 額外實作
+
+- Cache-first rendering
+- WebSocket 自動重連
+- Unit Tests
+- Architecture Documentation
