@@ -553,15 +553,6 @@ private extension LiveOddsProviderTests {
     }
 }
 
-private extension ReconnectPolicy {
-    static let test = ReconnectPolicy(
-        initialDelayNanoseconds: 0,
-        maxDelayNanoseconds: 0,
-        jitterRangeNanoseconds: 0,
-        maxAttempts: 0
-    )
-}
-
 private enum EventCollectionError: Error {
     case missingEvents
 }
