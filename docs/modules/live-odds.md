@@ -64,14 +64,14 @@ LiveOddsProvider.startLiveUpdatesIfNeeded(matchIDs:)
           -> yields .connected
           -> Timer repeats every second
           -> yields .oddsUpdated([OddsUpdateDTO])
+      -> maps OddsUpdateDTO to OddsUpdate
   -> LiveOddsProvider.handleOddsUpdates(_:)
-      -> map OddsUpdateDTO to OddsUpdate
       -> OddsStore.applyOddsUpdates(_:)
           -> Snapshot.applyOddsUpdates(_:)
       -> emit oddsUpdated(changedRecords:) when known records changed
 ```
 
-`MockOddsWebSocketService` 保留 provider-facing boundary，`connect(matchIDs:)` 建立 service-level stream 並協調 client receive loop。unexpected stream end 由 service 依 `ReconnectPolicy` 決定是否重新連線；Provider 不持有 retry attempt 或 delay。
+`MockOddsWebSocketService` 保留 provider-facing boundary，`connect(matchIDs:)` 建立 domain-level service stream、協調 client receive loop，並將 socket `OddsUpdateDTO` 轉成 domain `OddsUpdate`。unexpected stream end 由 service 依 `ReconnectPolicy` 決定是否重新連線；Provider 不持有 retry attempt 或 delay。
 
 `MockOddsWebSocketClient` 目前：
 

@@ -26,8 +26,8 @@ Mock WebSocket stream
   -> MockOddsWebSocketService
       -> ReconnectPolicy
       -> MockOddsWebSocketClient (Timer)
+      -> OddsUpdateDTO -> OddsUpdate
       -> LiveOddsProvider
-          -> OddsUpdateDTO -> OddsUpdate
           -> OddsStore actor
               -> Snapshot
               -> LiveOddsEvent.oddsUpdated
@@ -79,7 +79,7 @@ enum LiveOddsFeedStatus: Equatable {
 6. Provider 將 records 寫入 `OddsStore`，再 emit `.recordsLoaded(records)`。
 7. Provider 透過 `MockOddsWebSocketService` 啟動 live feed，並 emit feed status。
 8. WebSocket 每秒產生 1-10 筆 odds update batch；同一 batch 內避免重複 `matchID`。
-9. Provider 在 transport boundary 將 `OddsUpdateDTO` 轉成 domain `OddsUpdate`，再套用到 `OddsStore`，只把 changed records 透過 `.oddsUpdated(changedRecords:)` emit 給 ViewModel。
+9. `MockOddsWebSocketService` 將 socket `OddsUpdateDTO` 轉成 domain `OddsUpdate`；Provider 收到 domain updates 後套用到 `OddsStore`，只把 changed records 透過 `.oddsUpdated(changedRecords:)` emit 給 ViewModel。
 10. ViewModel 將 changed records 轉成 row view models，產生 row-level update intent，ViewController 只更新受影響的 row。
 
 ## Cache Scope
@@ -98,7 +98,7 @@ enum LiveOddsFeedStatus: Equatable {
 - `Timer` 只存在於 mock WebSocket client，不放在 ViewController 或 ViewModel。
 - `Timer` 加到 main run loop 的 `.common` mode，timer callback 只產生 batch 並透過 `AsyncStream<OddsWebSocketEvent>` 丟出事件，不做 domain mutation 或 UI 更新。
 - `LiveOddsProvider` 依賴 `OddsWebSocketServiceProtocol`，不直接依賴 `OddsWebSocketClientProtocol` 或具體 mock client。
-- `MockOddsWebSocketService` 是 provider 與 client 之間的 service boundary，負責 `connect(matchIDs:)` / `disconnect()`、client receive loop、connection state 與 reconnect。
+- `MockOddsWebSocketService` 是 provider 與 client 之間的 service boundary，負責 `connect(matchIDs:)` / `disconnect()`、client receive loop、connection state、socket DTO to domain update mapping 與 reconnect。
 - `connect(matchIDs:)` 會建立 service-level stream，並透過 client 開始每秒 batch 推播。
 - `connect(matchIDs:)` 會先停止既有 connection task，維持同一個 service instance 同時間只有一個 active live feed。
 - `disconnect()` 取消 service connection task、停止推播並 `invalidate()` timer；此操作需可重複呼叫且保持安全。
@@ -137,8 +137,8 @@ enum LiveOddsFeedStatus: Equatable {
 
 ## Live Update Thread-safety Flow
 
-Live odds updates 由 `MockOddsWebSocketService` 對 Provider 暴露 stream，底層 `MockOddsWebSocketClient` 持有 `Timer` 並透過 `AsyncStream<OddsWebSocketEvent>` 送出 `[OddsUpdateDTO]` batch。
-`LiveOddsProvider` 收到 batch 後轉成 domain `OddsUpdate`，再交給 `OddsStore` actor 更新 canonical match/odds state。
+Live odds updates 由 `MockOddsWebSocketService` 對 Provider 暴露 domain-level stream，底層 `MockOddsWebSocketClient` 持有 `Timer` 並透過 `AsyncStream<OddsWebSocketEvent>` 送出 `[OddsUpdateDTO]` batch。
+`MockOddsWebSocketService` 收到 batch 後轉成 domain `OddsUpdate`，Provider 再交給 `OddsStore` actor 更新 canonical match/odds state。
 `OddsStore` 在 actor isolation 內委派 `Snapshot` 套用資料修改、忽略未知 `matchID`，並回傳已更新的 `MatchRecord`。
 由於 `MatchesViewModel` 是 `@MainActor`，它會安全地消費 provider event，把 `MatchRecord` 轉成 `MatchRowViewModel`、更新 `displayRows`，再送出 row update intent。
 `MatchesViewController` 只負責把這些 row updates 套用到 table view，因此 live odds 更新不需要整頁 `reloadData()`。
@@ -227,11 +227,11 @@ LiveOddsProvider
 
 | Component | Responsibilities | Must Not Do |
 |:---|:---|:---|
-| `LiveOddsProvider` | Cache-first flow、background refresh trigger、WebSocket subscription、subscriber lifecycle、store updates、event emission、transport DTO to domain update mapping | Direct API fetching、DTO composition、mapper logic、records/index management、WebSocket reconnect implementation、WebSocket client implementation details、UI state |
+| `LiveOddsProvider` | Cache-first flow、background refresh trigger、WebSocket subscription、subscriber lifecycle、store updates、event emission | Direct API fetching、DTO composition、socket DTO mapping、mapper logic、records/index management、WebSocket reconnect implementation、WebSocket client implementation details、UI state |
 | `RecordsRepository` | Parallel API requests、API orchestration、mapper invocation、record composition | Cache、store mutation、WebSocket lifecycle、UI events |
 | `OddsStore` | Actor isolation、snapshot ownership、snapshot replacement、snapshot mutation entry points using domain updates | API logic、transport DTOs、WebSocket lifecycle、business/UI logic、manual records/index management outside `Snapshot` |
 | `Snapshot` | Records storage、CRUD、lookup、index management、ordering、domain odds update mutation | Actor isolation、transport DTOs、API logic、WebSocket lifecycle、business/UI logic |
-| `MockOddsWebSocketService` | Provider-facing connect/disconnect boundary、client receive loop、connection state、reconnect policy and retry delay | Store updates、event emission to ViewModel、API fetching、channel lifecycle redesign |
+| `MockOddsWebSocketService` | Provider-facing connect/disconnect boundary、client receive loop、connection state、socket DTO to domain update mapping、reconnect policy and retry delay | Store updates、event emission to ViewModel、API fetching、channel lifecycle redesign |
 | `MockOddsWebSocketClient` | Timer-backed mock feed、batch generation、stream continuation lifecycle | Domain mutation、UI updates、reconnect policy |
 | `MatchesViewModel` | Consume provider events、derive view state、map row updates | API calls、WebSocket connection、store access |
 

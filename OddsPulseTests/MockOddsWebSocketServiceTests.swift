@@ -27,6 +27,25 @@ final class MockOddsWebSocketServiceTests: XCTestCase {
         XCTAssertEqual(client.disconnectCallCount, 1)
     }
 
+    func testOddsUpdatedMapsClientDTOsToDomainUpdates() async throws {
+        let client = ControllableOddsWebSocketClient()
+        let service = MockOddsWebSocketService(webSocketClient: client)
+        let eventCollector = OddsWebSocketEventCollector(stream: service.connect(matchIDs: [1001]))
+
+        try await waitForConnectCallCount(1, in: client)
+        client.send(.oddsUpdated([
+            OddsUpdateDTO(matchID: 1001, teamAOdds: 1.88, teamBOdds: 2.05)
+        ]))
+
+        let events = try await eventCollector.collectNextEvents(count: 1, in: self)
+
+        XCTAssertEqual(events, [
+            .oddsUpdated([
+                OddsUpdate(matchID: 1001, teamAOdds: 1.88, teamBOdds: 2.05)
+            ])
+        ])
+    }
+
     func testStreamEndedReconnectsUntilPolicyIsExhausted() async throws {
         let client = ControllableOddsWebSocketClient()
         let service = MockOddsWebSocketService(
@@ -122,12 +141,12 @@ final class MockOddsWebSocketServiceTests: XCTestCase {
     }
 
     private func collectFirstEvent(
-        from stream: AsyncStream<OddsWebSocketEvent>,
+        from stream: AsyncStream<OddsWebSocketServiceEvent>,
         timeout: TimeInterval = 1
-    ) async throws -> OddsWebSocketEvent {
+    ) async throws -> OddsWebSocketServiceEvent {
         let expectation = expectation(description: "Collect first OddsWebSocketEvent")
         var iterator = stream.makeAsyncIterator()
-        var collectedEvent: OddsWebSocketEvent?
+        var collectedEvent: OddsWebSocketServiceEvent?
 
         let task = Task { @MainActor in
             collectedEvent = await iterator.next()
@@ -181,11 +200,11 @@ private final class ControllableOddsWebSocketClient: OddsWebSocketClientProtocol
 
 @MainActor
 private final class OddsWebSocketEventCollector {
-    private var pendingEvents: [OddsWebSocketEvent] = []
+    private var pendingEvents: [OddsWebSocketServiceEvent] = []
     private var pendingExpectations: [EventExpectation] = []
     private var collectionTask: Task<Void, Never>?
 
-    init(stream: AsyncStream<OddsWebSocketEvent>) {
+    init(stream: AsyncStream<OddsWebSocketServiceEvent>) {
         collectionTask = Task { @MainActor [weak self] in
             for await event in stream {
                 self?.record(event)
@@ -201,7 +220,7 @@ private final class OddsWebSocketEventCollector {
         count: Int,
         in testCase: XCTestCase,
         timeout: TimeInterval = 1
-    ) async throws -> [OddsWebSocketEvent] {
+    ) async throws -> [OddsWebSocketServiceEvent] {
         let expectation = testCase.expectation(
             description: "Collect next \(count) OddsWebSocketEvent values"
         )
@@ -230,7 +249,7 @@ private final class OddsWebSocketEventCollector {
         await testCase.fulfillment(of: [expectation], timeout: timeout)
     }
 
-    private func record(_ event: OddsWebSocketEvent) {
+    private func record(_ event: OddsWebSocketServiceEvent) {
         pendingEvents.append(event)
         fulfillReadyExpectations()
     }

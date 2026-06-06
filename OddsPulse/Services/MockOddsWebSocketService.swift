@@ -2,8 +2,16 @@ import Foundation
 
 @MainActor
 protocol OddsWebSocketServiceProtocol: AnyObject {
-    func connect(matchIDs: [Int]) -> AsyncStream<OddsWebSocketEvent>
+    func connect(matchIDs: [Int]) -> AsyncStream<OddsWebSocketServiceEvent>
     func disconnect()
+}
+
+enum OddsWebSocketServiceEvent: Equatable {
+    case connected
+    case reconnecting
+    case oddsUpdated([OddsUpdate])
+    case disconnected(reason: OddsWebSocketDisconnectReason)
+    case failed(OddsWebSocketError)
 }
 
 @MainActor
@@ -20,7 +28,7 @@ final class MockOddsWebSocketService: OddsWebSocketServiceProtocol {
 
     private var connectionState: ConnectionState = .disconnected
     private var connectionTask: Task<Void, Never>?
-    private var eventsContinuation: AsyncStream<OddsWebSocketEvent>.Continuation?
+    private var eventsContinuation: AsyncStream<OddsWebSocketServiceEvent>.Continuation?
     private var reconnectAttempt = 0
 
     init(reconnectPolicy: ReconnectPolicy = .default) {
@@ -40,11 +48,11 @@ final class MockOddsWebSocketService: OddsWebSocketServiceProtocol {
         disconnect()
     }
 
-    func connect(matchIDs: [Int]) -> AsyncStream<OddsWebSocketEvent> {
+    func connect(matchIDs: [Int]) -> AsyncStream<OddsWebSocketServiceEvent> {
         disconnect()
 
-        let streamPair = AsyncStream<OddsWebSocketEvent>.makeStream(
-            of: OddsWebSocketEvent.self,
+        let streamPair = AsyncStream<OddsWebSocketServiceEvent>.makeStream(
+            of: OddsWebSocketServiceEvent.self,
             bufferingPolicy: .bufferingNewest(20)
         )
         eventsContinuation = streamPair.continuation
@@ -103,19 +111,19 @@ final class MockOddsWebSocketService: OddsWebSocketServiceProtocol {
             switch event {
             case .connected:
                 connectionState = .connected
-                eventsContinuation?.yield(event)
+                eventsContinuation?.yield(.connected)
             case .reconnecting:
                 connectionState = .reconnecting
-                eventsContinuation?.yield(event)
-            case .oddsUpdated:
-                eventsContinuation?.yield(event)
+                eventsContinuation?.yield(.reconnecting)
+            case let .oddsUpdated(updates):
+                eventsContinuation?.yield(.oddsUpdated(updates.map(\.domainUpdate)))
             case let .disconnected(reason):
                 connectionState = .disconnected
-                eventsContinuation?.yield(event)
+                eventsContinuation?.yield(.disconnected(reason: reason))
                 return reason == .streamEnded
-            case .failed:
+            case let .failed(error):
                 connectionState = .disconnected
-                eventsContinuation?.yield(event)
+                eventsContinuation?.yield(.failed(error))
                 eventsContinuation?.finish()
                 eventsContinuation = nil
                 return false
@@ -137,5 +145,15 @@ final class MockOddsWebSocketService: OddsWebSocketServiceProtocol {
         } catch {
             return false
         }
+    }
+}
+
+private extension OddsUpdateDTO {
+    var domainUpdate: OddsUpdate {
+        OddsUpdate(
+            matchID: matchID,
+            teamAOdds: teamAOdds,
+            teamBOdds: teamBOdds
+        )
     }
 }

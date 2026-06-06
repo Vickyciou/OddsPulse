@@ -114,7 +114,7 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
         }
     }
 
-    private func runLiveUpdates(events: AsyncStream<OddsWebSocketEvent>) async {
+    private func runLiveUpdates(events: AsyncStream<OddsWebSocketServiceEvent>) async {
         defer {
             liveUpdatesTask = nil
         }
@@ -126,7 +126,7 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
         }
     }
 
-    private func handleWebSocketEvent(_ event: OddsWebSocketEvent) async -> Bool {
+    private func handleWebSocketEvent(_ event: OddsWebSocketServiceEvent) async -> Bool {
         switch event {
         case .connected:
             broadcast(.feedStatusChanged(.live))
@@ -145,8 +145,8 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
         }
     }
 
-    private func handleOddsUpdates(_ updates: [OddsUpdateDTO]) async {
-        let result = await oddsStore.applyOddsUpdates(updates.map(\.domainUpdate))
+    private func handleOddsUpdates(_ updates: [OddsUpdate]) async {
+        let result = await oddsStore.applyOddsUpdates(updates)
         guard !result.changedRecords.isEmpty else { return }
 
         broadcast(.oddsUpdated(changedRecords: result.changedRecords))
@@ -190,15 +190,5 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
 
     private func broadcast(_ event: LiveOddsEvent) {
         eventContinuations.values.forEach { $0.yield(event) }
-    }
-}
-
-private extension OddsUpdateDTO {
-    var domainUpdate: OddsUpdate {
-        OddsUpdate(
-            matchID: matchID,
-            teamAOdds: teamAOdds,
-            teamBOdds: teamBOdds
-        )
     }
 }

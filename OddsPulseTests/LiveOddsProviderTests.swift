@@ -123,8 +123,8 @@ final class LiveOddsProviderTests: XCTestCase {
 
         // 執行
         provider.webSocketService.send(.oddsUpdated([
-            OddsUpdateDTO(matchID: 1002, teamAOdds: 1.88, teamBOdds: 2.05),
-            OddsUpdateDTO(matchID: 9999, teamAOdds: 4.00, teamBOdds: 5.00)
+            OddsUpdate(matchID: 1002, teamAOdds: 1.88, teamBOdds: 2.05),
+            OddsUpdate(matchID: 9999, teamAOdds: 4.00, teamBOdds: 5.00)
         ]))
         let events = try await eventCollector.collectNextEvents(count: 1, in: self)
 
@@ -239,7 +239,7 @@ final class LiveOddsProviderTests: XCTestCase {
 
         // 傳送賠率更新
         provider.webSocketService.send(.oddsUpdated([
-            OddsUpdateDTO(matchID: 1001, teamAOdds: 1.88, teamBOdds: 2.05)
+            OddsUpdate(matchID: 1001, teamAOdds: 1.88, teamBOdds: 2.05)
         ]))
         _ = try await firstCollector.collectNextEvents(count: 1, in: self)
 
@@ -460,18 +460,18 @@ private actor FakeRecordsRepository: RecordsRepositoryProtocol {
 
 @MainActor
 private final class ControllableOddsWebSocketService: OddsWebSocketServiceProtocol {
-    private var continuation: AsyncStream<OddsWebSocketEvent>.Continuation?
+    private var continuation: AsyncStream<OddsWebSocketServiceEvent>.Continuation?
 
     private(set) var connectCallCount = 0
     private(set) var disconnectCallCount = 0
     private(set) var connectedMatchIDsHistory: [[Int]] = []
 
-    func connect(matchIDs: [Int]) -> AsyncStream<OddsWebSocketEvent> {
+    func connect(matchIDs: [Int]) -> AsyncStream<OddsWebSocketServiceEvent> {
         connectCallCount += 1
         connectedMatchIDsHistory.append(matchIDs)
 
-        let streamPair = AsyncStream<OddsWebSocketEvent>.makeStream(
-            of: OddsWebSocketEvent.self,
+        let streamPair = AsyncStream<OddsWebSocketServiceEvent>.makeStream(
+            of: OddsWebSocketServiceEvent.self,
             bufferingPolicy: .bufferingNewest(20)
         )
         continuation = streamPair.continuation
@@ -485,7 +485,7 @@ private final class ControllableOddsWebSocketService: OddsWebSocketServiceProtoc
         continuation = nil
     }
 
-    func send(_ event: OddsWebSocketEvent) {
+    func send(_ event: OddsWebSocketServiceEvent) {
         continuation?.yield(event)
         switch event {
         case .disconnected, .failed:
