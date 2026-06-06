@@ -4,26 +4,29 @@ import XCTest
 final class RecordsRepositoryTests: XCTestCase {
     func testFetchRecordsRunsServicesInParallelAndReturnsMappedRecords() async throws {
         let parallelFetchCoordinator = ParallelFetchCoordinator()
+        let matches = [
+            makeMatch(matchID: 1001),
+            makeMatch(matchID: 1002)
+        ]
+        let odds = [
+            makeOdds(matchID: 1001),
+            makeOdds(matchID: 1002)
+        ]
         let expectedRecords = [
             makeRecord(matchID: 3001),
             makeRecord(matchID: 3002)
         ]
+        let recordsMapper = SpyRecordsMapper(result: .success(expectedRecords))
         let repository = RecordsRepository(
             matchesService: FakeMatchesService(
-                result: .success([
-                    makeMatch(matchID: 1001),
-                    makeMatch(matchID: 1002)
-                ]),
+                result: .success(matches),
                 parallelFetchCoordinator: parallelFetchCoordinator
             ),
             oddsService: FakeOddsService(
-                result: .success([
-                    makeOdds(matchID: 1001),
-                    makeOdds(matchID: 1002)
-                ]),
+                result: .success(odds),
                 parallelFetchCoordinator: parallelFetchCoordinator
             ),
-            recordsMapper: StubRecordsMapper(result: .success(expectedRecords))
+            recordsMapper: recordsMapper
         )
 
         let records = try await repository.fetchRecords()
@@ -31,13 +34,15 @@ final class RecordsRepositoryTests: XCTestCase {
 
         XCTAssertEqual(records, expectedRecords)
         XCTAssertEqual(startedSources, [.matches, .odds])
+        XCTAssertEqual(recordsMapper.receivedMatches, matches)
+        XCTAssertEqual(recordsMapper.receivedOdds, odds)
     }
 
     func testFetchRecordsPropagatesMatchesFailure() async {
         let repository = RecordsRepository(
             matchesService: FakeMatchesService(result: .failure(TestError.matchesFailed)),
             oddsService: FakeOddsService(result: .success([makeOdds(matchID: 1001)])),
-            recordsMapper: StubRecordsMapper(result: .success([makeRecord(matchID: 1001)]))
+            recordsMapper: SpyRecordsMapper(result: .success([makeRecord(matchID: 1001)]))
         )
 
         await XCTAssertThrowsErrorAsync(try await repository.fetchRecords()) { error in
@@ -49,7 +54,7 @@ final class RecordsRepositoryTests: XCTestCase {
         let repository = RecordsRepository(
             matchesService: FakeMatchesService(result: .success([makeMatch(matchID: 1001)])),
             oddsService: FakeOddsService(result: .failure(TestError.oddsFailed)),
-            recordsMapper: StubRecordsMapper(result: .success([makeRecord(matchID: 1001)]))
+            recordsMapper: SpyRecordsMapper(result: .success([makeRecord(matchID: 1001)]))
         )
 
         await XCTAssertThrowsErrorAsync(try await repository.fetchRecords()) { error in
@@ -61,7 +66,7 @@ final class RecordsRepositoryTests: XCTestCase {
         let repository = RecordsRepository(
             matchesService: FakeMatchesService(result: .success([makeMatch(matchID: 1001)])),
             oddsService: FakeOddsService(result: .success([makeOdds(matchID: 1001)])),
-            recordsMapper: StubRecordsMapper(result: .failure(TestError.mappingFailed))
+            recordsMapper: SpyRecordsMapper(result: .failure(TestError.mappingFailed))
         )
 
         await XCTAssertThrowsErrorAsync(try await repository.fetchRecords()) { error in
@@ -171,14 +176,22 @@ private actor FakeOddsService: OddsServiceProtocol {
     }
 }
 
-nonisolated private struct StubRecordsMapper: RecordsMapping {
-    let result: Result<[MatchRecord], Error>
+nonisolated private final class SpyRecordsMapper: RecordsMapping, @unchecked Sendable {
+    private let result: Result<[MatchRecord], Error>
+    private(set) var receivedMatches: [MatchResponseDTO] = []
+    private(set) var receivedOdds: [OddsResponseDTO] = []
+
+    init(result: Result<[MatchRecord], Error>) {
+        self.result = result
+    }
 
     func makeRecords(
         matches: [MatchResponseDTO],
         odds: [OddsResponseDTO]
     ) throws -> [MatchRecord] {
-        try result.get()
+        receivedMatches = matches
+        receivedOdds = odds
+        return try result.get()
     }
 }
 

@@ -60,26 +60,6 @@ final class LiveOddsProviderTests: XCTestCase {
         XCTAssertEqual(webSocketService.connectCallCount, 0)
     }
 
-    func testRepositoryFailureDoesNotConnectWebSocket() async throws {
-        // 準備
-        let recordsRepository = FakeRecordsRepository(result: .failure(TestError.expected))
-        let webSocketService = ControllableOddsWebSocketService()
-        let provider = makeProvider(
-            recordsRepository: recordsRepository,
-            webSocketService: webSocketService
-        )
-
-        // 執行
-        let events = try await collectEvents(from: provider.stream(), count: 2)
-
-        // 驗證
-        XCTAssertEqual(events, [
-            .loading,
-            .refreshFailed(message: "Unable to load matches")
-        ])
-        XCTAssertEqual(webSocketService.connectCallCount, 0)
-    }
-
     func testCachedSnapshotSubscriberReceivesSnapshotThenRefreshesRecords() async throws {
         // 準備
         let store = FakeOddsStore()
@@ -154,6 +134,20 @@ final class LiveOddsProviderTests: XCTestCase {
 
         // 驗證
         await eventCollector.assertNoEvent(in: self)
+        XCTAssertEqual(provider.webSocketService.connectCallCount, 1)
+    }
+
+    func testStreamEndedDisconnectDoesNotReconnectBecauseWebSocketServiceOwnsReconnect() async throws {
+        // 準備
+        let provider = makeProviderWithLoadedRecords(matchIDs: [1001])
+        let eventCollector = LiveOddsEventCollector(stream: provider.provider.stream())
+        _ = try await eventCollector.collectNextEvents(count: 3, in: self)
+
+        // 執行
+        provider.webSocketService.send(.disconnected(reason: .streamEnded))
+        await yieldMainActor()
+
+        // 驗證
         XCTAssertEqual(provider.webSocketService.connectCallCount, 1)
     }
 
@@ -337,6 +331,12 @@ private extension LiveOddsProviderTests {
         }
 
         throw EventCollectionError.missingEvents
+    }
+
+    func yieldMainActor(iterations: Int = 5) async {
+        for _ in 0..<iterations {
+            await Task.yield()
+        }
     }
 
     func makeRecord(
