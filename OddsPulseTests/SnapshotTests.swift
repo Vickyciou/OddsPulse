@@ -26,7 +26,7 @@ final class SnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.record(for: 1001)?.teamA, "Falcons")
     }
 
-    func testRemoveDeletesRecordAndUpdatesLookupIndex() {
+    func testRemoveRecordReturnsRemovedRecordAndKeepsRemainingRecords() {
         var snapshot = Snapshot(records: [
             makeRecord(matchID: 1001),
             makeRecord(matchID: 1002),
@@ -41,6 +41,19 @@ final class SnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.record(for: 1003)?.matchID, 1003)
     }
 
+    func testRemoveUnknownRecordReturnsNilAndKeepsRecordsUnchanged() {
+        var snapshot = Snapshot(records: [
+            makeRecord(matchID: 1001),
+            makeRecord(matchID: 1002)
+        ])
+
+        let removedRecord = snapshot.removeRecord(matchID: 9999)
+
+        XCTAssertNil(removedRecord)
+        XCTAssertEqual(snapshot.orderedRecords.map(\.matchID), [1001, 1002])
+        XCTAssertEqual(snapshot.record(for: 1002)?.matchID, 1002)
+    }
+
     func testLookupReturnsRecordForKnownMatchID() {
         let snapshot = Snapshot(records: [
             makeRecord(matchID: 1001),
@@ -51,7 +64,7 @@ final class SnapshotTests: XCTestCase {
         XCTAssertNil(snapshot.record(for: 9999))
     }
 
-    func testReplaceRecordsResetsStorageOrderingAndLookup() {
+    func testReplaceRecordsExposesOnlyNewRecords() {
         var snapshot = Snapshot(records: [makeRecord(matchID: 1001)])
 
         snapshot.replaceRecords([
