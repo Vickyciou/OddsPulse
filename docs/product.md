@@ -1,10 +1,10 @@
 # Product
 
-本文件記錄 OddsPulse interview homework 的題目需求、scope 與交付項目。
+本文件記錄 OddsPulse 的題目需求、實作範圍、假設邊界與刻意不收的範圍。
 
-## 題目摘要
+## Problem
 
-OddsPulse 是即時賽事賠率系統。App 需展示約 100 筆比賽資料，整合 mock REST API、mock WebSocket odds update、thread-safe 資料處理與即時 UI 更新。
+OddsPulse 是即時賽事賠率系統。App 展示約 100 筆比賽資料，整合 mock REST API、mock WebSocket odds update、thread-safe 資料處理與即時 UI 更新。
 
 ## Core Requirements
 
@@ -19,19 +19,17 @@ OddsPulse 是即時賽事賠率系統。App 需展示約 100 筆比賽資料，�
 | Performance | 畫面需保持順暢，避免卡頓與頻繁重載 |
 | Thread safety | 多執行緒下需確保資料一致性並避免 race condition |
 
-## 假設與邊界
+## Assumptions
 
 - `GET /matches` 與 `GET /odds` 是彼此獨立的初始資料來源，可平行請求。
-- `matchID` 依作業 payload 使用 `Int`，但只作為 opaque identifier，用於合併 matches、initial odds 與 live odds updates；若未來接真實 provider，可改為 `String` 或 provider-specific ID wrapper。
-- `startTime` 使用 ISO8601 UTC 格式，例如 `2025-07-04T13:00:00Z`，App 解析成 `Date` 後依時間升序排序；若時間相同，才使用 `matchID` 作 deterministic tie-breaker。
-- mock `/odds` 正常情況會為每場比賽提供初始賠率，但 App 仍需能處理缺少賠率的邊界情境；domain 以 `OddsState.available(teamAOdds:teamBOdds:)` 與 `OddsState.unavailable` 表達，UI 以 `--` 顯示缺少賠率。
-- 每筆 WebSocket message 都代表某一場比賽的完整賠率快照，包含 `teamAOdds` 與 `teamBOdds`。
-- mock WebSocket 使用 `Timer` 每秒推播一個 batch，每批包含 1-10 筆 odds updates。
-- 同一個 batch 內不重複更新同一個 `matchID`。
-- mock WebSocket 正常只會針對已知 `matchID` 產生更新。
-- 若收到未知 `matchID` 的 update，App 會忽略該 update，並保留診斷資訊。
-- 因題目提供的 payload 沒有 sequence number 或 timestamp，out-of-order reconciliation 不列入本次範圍。
-- 若實作加分 cache，採用記憶體中的 latest-state cache，不做 disk persistence。
+- `matchID` 使用 `Int`，作為 opaque identifier 用於合併 matches、initial odds 與 live odds updates。
+- `startTime` 使用 ISO8601 UTC 格式（例如 `2025-07-04T13:00:00Z`），解析成 `Date` 後依時間升序排序；時間相同以 `matchID` 作 deterministic tie-breaker。
+- mock `/odds` 正常情況為每場比賽提供初始賠率，但 App 仍處理缺少賠率的邊界情境：domain 以 `OddsState.available` / `.unavailable` 表達，UI 以 `--` 顯示。
+- 每筆 WebSocket message 代表某一場比賽的完整賠率快照，包含 `teamAOdds` 與 `teamBOdds`。
+- mock WebSocket 使用 `Timer` 每秒推播一個 batch，每批 1-10 筆 odds updates；同 batch 內不重複同一個 `matchID`。
+- mock WebSocket 正常只針對已知 `matchID` 產生更新；收到未知 `matchID` 時 App 忽略該 update 並保留診斷資訊。
+- 因 payload 無 sequence number 或 timestamp，out-of-order reconciliation 不列入本次範圍。
+- 快取採用 in-memory scene/session cache，不做 disk persistence。
 
 ## Technical Constraints
 
@@ -44,13 +42,14 @@ OddsPulse 是即時賽事賠率系統。App 需展示約 100 筆比賽資料，�
 | Async | Swift Concurrency 優先 |
 | Data source | 固定 JSON fixture |
 
-## Bonus Scope
+## Completed Extras
 
-| 加分項 | 處理原則 |
+核心需求之外已完成的項目：
+
+| 項目 | 實作方式 |
 |:---|:---|
-| WebSocket 自動重連 | 核心需求完成後再做 |
-| Cache | 核心需求完成後再做；需清楚說明 cache 邊界 |
-| Instruments | 可作為加分驗證，不阻塞核心交付 |
+| WebSocket 自動重連 | `ReconnectPolicy`（exponential backoff、max delay、jitter、max 5 attempts） |
+| Cache | In-memory scene/session cache，由 `LiveOddsProvider` + `OddsStore` actor 保存 |
 
 ## Non-goals
 
@@ -59,11 +58,6 @@ OddsPulse 是即時賽事賠率系統。App 需展示約 100 筆比賽資料，�
 - 不加入非必要第三方套件。
 - 不為了展示架構而建立過度抽象層。
 
-## Delivery Checklist
+## Current Delivery
 
-| 交付項目 | 狀態 |
-|:---|:---|
-| Source code | 已實作：programmatic app root、mock REST、mock WebSocket、thread-safe store、row-level update、reconnect 與 scene/session cache |
-| 架構說明 | 已補於 [`architecture.md`](architecture.md)，模組細節見 [`modules/live-odds.md`](modules/live-odds.md) 與 [`modules/matches-ui.md`](modules/matches-ui.md) |
-| 操作影片 | 可選，目前未納入 codebase 文件紀錄 |
-| Unit tests | 已提供 XCTest，覆蓋 mapping、store、WebSocket、provider、ViewModel 與 reconnect policy |
+所有核心需求與兩項加分項已完成。完整架構說明見 [`architecture.md`](architecture.md)，模組細節見 [`modules/live-odds.md`](modules/live-odds.md) 與 [`modules/matches-ui.md`](modules/matches-ui.md)。XCTest 覆蓋 mapping、repository、snapshot、store、WebSocket service/client、provider、ViewModel 與 reconnect policy（10 test files）。
