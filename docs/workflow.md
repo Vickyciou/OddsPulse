@@ -48,8 +48,8 @@ xcodebuild test -project OddsPulse.xcodeproj -scheme OddsPulse -destination 'pla
 | `OddsStoreTests.swift` | known/unknown odds updates、replace all、snapshot |
 | `MockOddsWebSocketServiceTests.swift` | connect/disconnect delegation、event forwarding、DTO-to-domain mapping、stream-ended reconnect、manual disconnect no reconnect、reconnect max attempts |
 | `MockOddsWebSocketClientTests.swift` | batch match IDs、empty IDs、connected event、disconnect finishes stream |
-| `LiveOddsProviderTests.swift` | initial load、cached snapshot、refresh failure、unknown update、subscriber cancellation、WebSocketService start/stop、feed status event mapping |
-| `MatchesViewModelTests.swift` | loading、loaded、failed、row update、feed status、stream cancellation |
+| `LiveOddsProviderTests.swift` | initial load、cached snapshot、refresh failure no WebSocket、refreshed match IDs for WebSocket start、unknown update、subscriber cancellation、WebSocketService start/stop、feed status event mapping |
+| `MatchesViewModelTests.swift` | loading、loaded、refresh failure keeps cached rows、refresh failure without data stays empty、row update、feed status、stream cancellation |
 | `ReconnectPolicyTests.swift` | reconnect delay cap 與 retry limit |
 
 ## Verification Notes

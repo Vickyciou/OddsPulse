@@ -123,7 +123,7 @@ Subscriber lifecycle：
 
 | Test file | 覆蓋範圍 |
 |:---|:---|
-| `LiveOddsProviderTests.swift` | initial load、cached snapshot、unknown update、stream cancellation、WebSocket usage、feed status event mapping |
+| `LiveOddsProviderTests.swift` | initial load、cached snapshot、refresh failure no WebSocket、refreshed match IDs for WebSocket start、unknown update、stream cancellation、feed status event mapping |
 | `RecordsRepositoryTests.swift` | parallel fetch、API failure propagation、mapper invocation、output records |
 | `MockOddsWebSocketServiceTests.swift` | connect/disconnect delegation、event forwarding、stream-ended reconnect、manual disconnect no reconnect、retry policy |
 | `MockOddsWebSocketClientTests.swift` | batch IDs、empty IDs、connected event、disconnect finishes stream |

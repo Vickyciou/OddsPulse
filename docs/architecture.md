@@ -185,8 +185,8 @@ Live odds updates 由 `MockOddsWebSocketService` 對 Provider 暴露 domain-leve
 | Odds update | `OddsStoreTests.swift` 驗證 known / unknown odds updates、replace all 與 snapshot |
 | WebSocket service | `MockOddsWebSocketServiceTests.swift` 驗證 connect/disconnect delegation、event forwarding、stream-ended reconnect、manual disconnect no reconnect 與 retry policy |
 | WebSocket batch | `MockOddsWebSocketClientTests.swift` 驗證 batch match IDs、empty IDs、connected event 與 disconnect stream finish |
-| Provider output | `LiveOddsProviderTests.swift` 驗證 initial load、cached snapshot、unknown update、subscriber cancellation、WebSocket usage 與 feed status event mapping |
-| ViewModel output | `MatchesViewModelTests.swift` 驗證 loading、loaded、failed、row update、feed status 與 stream cancellation |
+| Provider output | `LiveOddsProviderTests.swift` 驗證 initial load、cached snapshot、refresh failure no WebSocket、refreshed match IDs for WebSocket start、unknown update、subscriber cancellation 與 feed status event mapping |
+| ViewModel output | `MatchesViewModelTests.swift` 驗證 loading、loaded、refresh failure keeps cached rows、refresh failure without data stays empty、row update、feed status 與 stream cancellation |
 | Row formatting | `MatchRowViewModelMapperTests.swift` 驗證 unavailable odds 顯示 |
 | Reconnect policy | `ReconnectPolicyTests.swift` 驗證 delay cap 與 retry limit |
 

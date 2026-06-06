@@ -89,5 +89,5 @@ LiveOddsEvent.oddsUpdated(changedRecords:)
 
 | Test file | 覆蓋範圍 |
 |:---|:---|
-| `MatchesViewModelTests.swift` | loading、records loaded、initial load failed、row update、unknown row、feed status、stream cancellation |
+| `MatchesViewModelTests.swift` | loading、records loaded、initial load failed、refresh failure keeps cached rows、refresh failure without data stays empty、row update、unknown row、feed status、stream cancellation |
 | `MatchRowViewModelMapperTests.swift` | unavailable odds 顯示 `--` |
