@@ -120,11 +120,11 @@ final class LiveOddsProviderTests: XCTestCase {
 
         // 驗證
         assertRecordsLoadedEvent(events[0], expectedMatchIDs: [1001, 1002])
-        assertFeedStatusChangedEvent(events[1], expectedStatus: .connecting)
-        assertRecordsLoadedEvent(events[2], expectedMatchIDs: [9999])
+        assertRecordsLoadedEvent(events[1], expectedMatchIDs: [9999])
+        assertFeedStatusChangedEvent(events[2], expectedStatus: .connecting)
     }
 
-    func testSubscriberWithCachedSnapshotConnectsWebSocketUsingSnapshotMatchIDs() async throws {
+    func testSubscriberWithCachedSnapshotConnectsWebSocketUsingRefreshedMatchIDs() async throws {
         // 準備
         let store = FakeOddsStore()
         store.snapshotOverride = [
@@ -145,7 +145,31 @@ final class LiveOddsProviderTests: XCTestCase {
         _ = try await collectEvents(from: provider.stream(), count: 3)
 
         // 驗證
-        XCTAssertEqual(webSocketService.connectedMatchIDsHistory, [[1001, 1002]])
+        XCTAssertEqual(webSocketService.connectedMatchIDsHistory, [[9999]])
+    }
+
+    func testSubscriberWithCachedSnapshotRefreshFailureDoesNotConnectWebSocket() async throws {
+        // 準備
+        let store = FakeOddsStore()
+        store.snapshotOverride = [
+            makeRecord(matchID: 1001),
+            makeRecord(matchID: 1002)
+        ]
+        let recordsRepository = FakeRecordsRepository(result: .failure(TestError.expected))
+        let webSocketService = ControllableOddsWebSocketService()
+        let provider = makeProvider(
+            recordsRepository: recordsRepository,
+            webSocketService: webSocketService,
+            store: store
+        )
+
+        // 執行
+        let events = try await collectEvents(from: provider.stream(), count: 2)
+
+        // 驗證
+        assertRecordsLoadedEvent(events[0], expectedMatchIDs: [1001, 1002])
+        XCTAssertEqual(events[1], .refreshFailed(message: "Unable to load matches"))
+        XCTAssertEqual(webSocketService.connectCallCount, 0)
     }
 
     func testMultipleSubscribersReceiveSameRefreshEvents() async throws {

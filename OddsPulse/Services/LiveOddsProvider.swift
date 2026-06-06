@@ -71,7 +71,6 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
         let snapshotRecords = await oddsStore.snapshot()
         if !snapshotRecords.isEmpty {
             send(.recordsLoaded(snapshotRecords), to: subscriberID)
-            startLiveUpdatesIfNeeded(matchIDs: snapshotRecords.map(\.matchID))
         } else {
             send(.loading, to: subscriberID)
         }

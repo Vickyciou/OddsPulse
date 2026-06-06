@@ -77,7 +77,7 @@ enum LiveOddsFeedStatus: Equatable {
 4. `RecordsRepository` 平行請求 mock `/matches` 與 mock `/odds`，再呼叫 mapper 組成 records。
 5. `MatchRecordMapper` 使用 `matchID` 將比賽基本資料與初始賠率合併，依 `startTime` 升序排序；時間相同時用 `matchID` 作 deterministic tie-breaker。
 6. Provider 將 records 寫入 `OddsStore`，再 emit `.recordsLoaded(records)`。
-7. Provider 透過 `MockOddsWebSocketService` 啟動 live feed，並 emit feed status。
+7. Provider 用 refresh 成功後的最新 records / latest `matchID` 透過 `MockOddsWebSocketService` 啟動 live feed，並 emit feed status。
 8. WebSocket 每秒產生 1-10 筆 odds update batch；同一 batch 內避免重複 `matchID`。
 9. `MockOddsWebSocketService` 將 socket `OddsUpdateDTO` 轉成 domain `OddsUpdate`；Provider 收到 domain updates 後套用到 `OddsStore`，只把 changed records 透過 `.oddsUpdated(changedRecords:)` emit 給 ViewModel。
 10. ViewModel 將 changed records 轉成 row view models，產生 row-level update intent，ViewController 只更新受影響的 row。
@@ -91,6 +91,7 @@ enum LiveOddsFeedStatus: Equatable {
 - `SceneDependencies` 持有 shared `LiveOddsProviderProtocol`，讓同一個 scene 內新建立的 ViewModel 訂閱同一份 provider。
 - 切換畫面後，新 ViewModel 可立即從 provider 收到 store snapshot，不需等待 `/matches` 與 `/odds` 重新完成。
 - WebSocket 更新會寫回同一個 store，因此快速恢復顯示時會包含最新 WebSocket-applied odds。
+- Cached snapshot 只負責 initial render；若 refresh 失敗，Provider 保留 cached UI 並 emit refresh failure，但不會用 cached `matchID` 啟動 WebSocket。
 - 此快取不做 disk persistence，不承諾 app 被終止後仍可離線恢復；賠率資料仍以 mock API 與 WebSocket feed 為 source of truth。
 
 ## Mock WebSocket Service

@@ -43,17 +43,19 @@ subscriber calls stream()
   -> OddsStore.snapshot()
       -> if snapshot exists: emit recordsLoaded(snapshot.records)
       -> if empty: emit loading
-      -> RecordsRepository.fetchRecords()
-          -> async let matchesService.fetchMatches()
-          -> async let oddsService.fetchInitialOdds()
-          -> MatchRecordMapper.makeRecords(matches:odds:)
-      -> OddsStore.replaceRecords(records)
-          -> Snapshot.replaceRecords(records)
-      -> emit recordsLoaded(records)
-      -> start live updates
+  -> RecordsRepository.fetchRecords()
+      -> async let matchesService.fetchMatches()
+      -> async let oddsService.fetchInitialOdds()
+      -> MatchRecordMapper.makeRecords(matches:odds:)
+  -> OddsStore.replaceRecords(records)
+      -> Snapshot.replaceRecords(records)
+  -> emit recordsLoaded(records)
+  -> start live updates using refreshed record match IDs
 ```
 
 `MockMatchesService` 與 `MockOddsService` 皆使用 `Task.sleep` 模擬延遲，再透過 `BundleResourceLoader` 讀取 `Resources/MockData/` 下的 JSON fixture。
+
+Cached snapshot 只用於 immediate UI rendering，不用來決定 WebSocket live subscription identity。若 snapshot 存在但 refresh 失敗，Provider 會保留 cached UI、emit `.refreshFailed(message:)`，且不會用 cached `matchID` 啟動 WebSocket。
 
 ## Live Update Flow
 
