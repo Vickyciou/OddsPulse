@@ -26,23 +26,19 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
     private let recordsRepository: RecordsRepositoryProtocol
     private let oddsWebSocketService: OddsWebSocketServiceProtocol
     private let oddsStore: OddsStoreProtocol
-    private let reconnectPolicy: ReconnectPolicy
 
     private var eventContinuations: [UUID: AsyncStream<LiveOddsEvent>.Continuation] = [:]
     private var refreshTask: Task<Void, Never>?
     private var liveUpdatesTask: Task<Void, Never>?
-    private var reconnectAttempt = 0
 
     init(
         recordsRepository: RecordsRepositoryProtocol? = nil,
         oddsWebSocketService: OddsWebSocketServiceProtocol? = nil,
-        oddsStore: OddsStoreProtocol? = nil,
-        reconnectPolicy: ReconnectPolicy = .default
+        oddsStore: OddsStoreProtocol? = nil
     ) {
         self.recordsRepository = recordsRepository ?? RecordsRepository()
         self.oddsWebSocketService = oddsWebSocketService ?? MockOddsWebSocketService()
         self.oddsStore = oddsStore ?? OddsStore()
-        self.reconnectPolicy = reconnectPolicy
     }
 
     isolated deinit {
@@ -111,59 +107,32 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
     private func startLiveUpdatesIfNeeded(matchIDs: [Int]) {
         guard liveUpdatesTask == nil else { return }
 
-        reconnectAttempt = 0
         broadcast(.feedStatusChanged(.connecting))
-        let initialEvents = oddsWebSocketService.connect(matchIDs: matchIDs)
+        let events = oddsWebSocketService.connect(matchIDs: matchIDs)
         liveUpdatesTask = Task { @MainActor [weak self] in
-            await self?.runLiveUpdates(matchIDs: matchIDs, initialEvents: initialEvents)
+            await self?.runLiveUpdates(events: events)
         }
     }
 
-    private func runLiveUpdates(
-        matchIDs: [Int],
-        initialEvents: AsyncStream<OddsWebSocketEvent>
-    ) async {
+    private func runLiveUpdates(events: AsyncStream<OddsWebSocketEvent>) async {
         defer {
             liveUpdatesTask = nil
         }
 
-        var events: AsyncStream<OddsWebSocketEvent>? = initialEvents
-
-        while !Task.isCancelled && hasSubscribers {
-            let currentEvents = events ?? oddsWebSocketService.connect(matchIDs: matchIDs)
-            events = nil
-
-            for await event in currentEvents {
-                guard !Task.isCancelled, hasSubscribers else { return }
-                let shouldContinue = await handleWebSocketEvent(event)
-                guard shouldContinue else { return }
-            }
-
+        for await event in events {
             guard !Task.isCancelled, hasSubscribers else { return }
-            guard reconnectPolicy.shouldRetry(afterAttempt: reconnectAttempt) else {
-                broadcast(.feedStatusChanged(.unavailable(message: "Live odds unavailable")))
-                return
-            }
-
-            broadcast(.feedStatusChanged(.reconnecting))
-            let reconnectDelayNanoseconds = reconnectPolicy.delayNanoseconds(
-                forAttempt: reconnectAttempt
-            )
-            reconnectAttempt += 1
-
-            do {
-                try await Task.sleep(nanoseconds: reconnectDelayNanoseconds)
-            } catch {
-                return
-            }
+            let shouldContinue = await handleWebSocketEvent(event)
+            guard shouldContinue else { return }
         }
     }
 
     private func handleWebSocketEvent(_ event: OddsWebSocketEvent) async -> Bool {
         switch event {
         case .connected:
-            reconnectAttempt = 0
             broadcast(.feedStatusChanged(.live))
+            return true
+        case .reconnecting:
+            broadcast(.feedStatusChanged(.reconnecting))
             return true
         case let .oddsUpdated(updates):
             await handleOddsUpdates(updates)
@@ -177,7 +146,7 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
     }
 
     private func handleOddsUpdates(_ updates: [OddsUpdateDTO]) async {
-        let result = await oddsStore.applyOddsUpdates(updates)
+        let result = await oddsStore.applyOddsUpdates(updates.map(\.domainUpdate))
         guard !result.changedRecords.isEmpty else { return }
 
         broadcast(.oddsUpdated(changedRecords: result.changedRecords))
@@ -213,7 +182,6 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
         liveUpdatesTask?.cancel()
         liveUpdatesTask = nil
         oddsWebSocketService.disconnect()
-        reconnectAttempt = 0
     }
 
     private func send(_ event: LiveOddsEvent, to subscriberID: UUID) {
@@ -222,5 +190,15 @@ final class LiveOddsProvider: LiveOddsProviderProtocol {
 
     private func broadcast(_ event: LiveOddsEvent) {
         eventContinuations.values.forEach { $0.yield(event) }
+    }
+}
+
+private extension OddsUpdateDTO {
+    var domainUpdate: OddsUpdate {
+        OddsUpdate(
+            matchID: matchID,
+            teamAOdds: teamAOdds,
+            teamBOdds: teamBOdds
+        )
     }
 }

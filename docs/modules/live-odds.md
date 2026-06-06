@@ -6,10 +6,10 @@
 
 | 類別 | 主要型別 | 職責 |
 |:---|:---|:---|
-| Provider | `LiveOddsProvider`、`LiveOddsProviderProtocol` | odds 資料單一入口，管理 cache-first flow、background refresh trigger、live feed、store updates、subscriber count 與 reconnect |
+| Provider | `LiveOddsProvider`、`LiveOddsProviderProtocol` | odds 資料單一入口，管理 cache-first flow、background refresh trigger、live feed subscription、store updates、subscriber count 與 event emission |
 | Repository | `RecordsRepository`、`RecordsRepositoryProtocol` | 平行呼叫 REST mock services、執行 mapper，回傳 `[MatchRecord]` |
 | REST mock | `MockMatchesService`、`MockOddsService` | 從 bundled JSON fixtures 讀取 matches 與 initial odds |
-| WebSocket service | `MockOddsWebSocketService`、`OddsWebSocketServiceProtocol` | Provider-facing connect/disconnect boundary，包裝 WebSocket client |
+| WebSocket service | `MockOddsWebSocketService`、`OddsWebSocketServiceProtocol` | Provider-facing connect/disconnect boundary，包裝 WebSocket client，管理 receive loop、connection state 與 reconnect |
 | WebSocket mock | `MockOddsWebSocketClient`、`OddsWebSocketEvent` | 使用 `Timer` 模擬 live odds batch updates |
 | Store | `OddsStore`、`Snapshot` | `OddsStore` 提供 actor-isolated canonical state；`Snapshot` 管理 records、lookup index、ordering 與 mutation |
 | Policy | `ReconnectPolicy` | reconnect delay、jitter 與 retry limit |
@@ -65,12 +65,13 @@ LiveOddsProvider.startLiveUpdatesIfNeeded(matchIDs:)
           -> Timer repeats every second
           -> yields .oddsUpdated([OddsUpdateDTO])
   -> LiveOddsProvider.handleOddsUpdates(_:)
+      -> map OddsUpdateDTO to OddsUpdate
       -> OddsStore.applyOddsUpdates(_:)
           -> Snapshot.applyOddsUpdates(_:)
       -> emit oddsUpdated(changedRecords:) when known records changed
 ```
 
-`MockOddsWebSocketService` 目前只保留 provider-facing boundary，`connect(matchIDs:)` 與 `disconnect()` 委派給 `MockOddsWebSocketClient`，不重設 channel lifecycle。
+`MockOddsWebSocketService` 保留 provider-facing boundary，`connect(matchIDs:)` 建立 service-level stream 並協調 client receive loop。unexpected stream end 由 service 依 `ReconnectPolicy` 決定是否重新連線；Provider 不持有 retry attempt 或 delay。
 
 `MockOddsWebSocketClient` 目前：
 
@@ -103,15 +104,16 @@ Subscriber lifecycle：
 
 ## Reconnect Behavior
 
-`LiveOddsProvider` 對 unexpected stream end 套用 `ReconnectPolicy`。
+`MockOddsWebSocketService` 對 unexpected stream end 套用 `ReconnectPolicy`。
 
 | 狀態 | 行為 |
 |:---|:---|
-| `.connected` | reconnect attempt reset 為 0，emit `.live` |
-| `.disconnected(.manual)` | 停止 live update loop |
-| `.disconnected(.noMatchIDs)` | emit unavailable message，停止 loop |
-| `.disconnected(.streamEnded)` | 依 `ReconnectPolicy` 決定是否重連 |
-| `.failed` | emit unavailable message，停止 loop |
+| `.connected` | Provider emit `.live` |
+| `.reconnecting` | Provider emit `.reconnecting` |
+| `.disconnected(.manual)` | 停止 live update loop，service 不重連 |
+| `.disconnected(.noMatchIDs)` | Provider emit unavailable message，service 不重連 |
+| `.disconnected(.streamEnded)` | service 依 `ReconnectPolicy` 決定是否重連 |
+| `.failed` | Provider emit unavailable message，停止 loop |
 
 `ReconnectPolicy.default` 目前設定 initial delay 1 秒、max delay 8 秒、jitter 250ms、max attempts 5。
 
@@ -119,9 +121,9 @@ Subscriber lifecycle：
 
 | Test file | 覆蓋範圍 |
 |:---|:---|
-| `LiveOddsProviderTests.swift` | initial load、cached snapshot、unknown update、stream cancellation、reconnect max attempts |
+| `LiveOddsProviderTests.swift` | initial load、cached snapshot、unknown update、stream cancellation、WebSocket usage、feed status event mapping |
 | `RecordsRepositoryTests.swift` | parallel fetch、API failure propagation、mapper invocation、output records |
-| `MockOddsWebSocketServiceTests.swift` | connect/disconnect delegation、event forwarding |
+| `MockOddsWebSocketServiceTests.swift` | connect/disconnect delegation、event forwarding、stream-ended reconnect、manual disconnect no reconnect、retry policy |
 | `MockOddsWebSocketClientTests.swift` | batch IDs、empty IDs、connected event、disconnect finishes stream |
 | `SnapshotTests.swift` | upsert、remove、ordering、lookup、replace、apply |
 | `OddsStoreTests.swift` | known/unknown odds updates、replace all、snapshot |

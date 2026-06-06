@@ -8,7 +8,7 @@ nonisolated struct UpdateResult: Equatable, Sendable {
 protocol OddsStoreProtocol: AnyObject {
     func replaceRecords(_ records: [MatchRecord]) async
     func snapshot() async -> [MatchRecord]
-    func applyOddsUpdates(_ updates: [OddsUpdateDTO]) async -> UpdateResult
+    func applyOddsUpdates(_ updates: [OddsUpdate]) async -> UpdateResult
 }
 
 actor OddsStore: OddsStoreProtocol {
@@ -22,7 +22,7 @@ actor OddsStore: OddsStoreProtocol {
         currentSnapshot.orderedRecords
     }
 
-    func applyOddsUpdates(_ updates: [OddsUpdateDTO]) -> UpdateResult {
+    func applyOddsUpdates(_ updates: [OddsUpdate]) -> UpdateResult {
         currentSnapshot.applyOddsUpdates(updates)
     }
 }

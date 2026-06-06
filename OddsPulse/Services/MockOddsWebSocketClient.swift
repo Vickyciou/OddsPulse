@@ -8,6 +8,7 @@ protocol OddsWebSocketClientProtocol: AnyObject {
 
 enum OddsWebSocketEvent: Equatable {
     case connected
+    case reconnecting
     case oddsUpdated([OddsUpdateDTO])
     case disconnected(reason: OddsWebSocketDisconnectReason)
     case failed(OddsWebSocketError)

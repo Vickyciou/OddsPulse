@@ -195,40 +195,19 @@ final class LiveOddsProviderTests: XCTestCase {
         XCTAssertEqual(provider.webSocketService.connectCallCount, 1)
     }
 
-    func testStreamEndedReconnectsUntilMaxAttemptsThenBroadcastsUnavailable() async throws {
+    func testReconnectingEventBroadcastsReconnectingFeedStatus() async throws {
         // 準備
-        let provider = makeProviderWithLoadedRecords(
-            matchIDs: [1001],
-            reconnectPolicy: ReconnectPolicy(
-                initialDelayNanoseconds: 0,
-                maxDelayNanoseconds: 0,
-                jitterRangeNanoseconds: 0,
-                maxAttempts: 2
-            )
-        )
+        let provider = makeProviderWithLoadedRecords(matchIDs: [1001])
         let eventCollector = LiveOddsEventCollector(stream: provider.provider.stream())
         _ = try await eventCollector.collectNextEvents(count: 3, in: self)
 
         // 執行
-        provider.webSocketService.send(.disconnected(reason: .streamEnded))
-        let firstReconnectEvents = try await eventCollector.collectNextEvents(count: 1, in: self)
-        try await waitForConnectCallCount(2, in: provider.webSocketService)
-
-        provider.webSocketService.send(.disconnected(reason: .streamEnded))
-        let secondReconnectEvents = try await eventCollector.collectNextEvents(count: 1, in: self)
-        try await waitForConnectCallCount(3, in: provider.webSocketService)
-
-        provider.webSocketService.send(.disconnected(reason: .streamEnded))
-        let unavailableEvents = try await eventCollector.collectNextEvents(count: 1, in: self)
+        provider.webSocketService.send(.reconnecting)
+        let events = try await eventCollector.collectNextEvents(count: 1, in: self)
 
         // 驗證
-        XCTAssertEqual(firstReconnectEvents, [.feedStatusChanged(.reconnecting)])
-        XCTAssertEqual(secondReconnectEvents, [.feedStatusChanged(.reconnecting)])
-        XCTAssertEqual(
-            unavailableEvents,
-            [.feedStatusChanged(.unavailable(message: "Live odds unavailable"))]
-        )
-        XCTAssertEqual(provider.webSocketService.connectCallCount, 3)
+        XCTAssertEqual(events, [.feedStatusChanged(.reconnecting)])
+        XCTAssertEqual(provider.webSocketService.connectCallCount, 1)
     }
 
     func testCancelingLastSubscriberDisconnectsWebSocket() async throws {
@@ -307,8 +286,7 @@ private extension LiveOddsProviderTests {
     func makeProvider(
         recordsRepository: RecordsRepositoryProtocol? = nil,
         webSocketService: ControllableOddsWebSocketService? = nil,
-        store: OddsStoreProtocol = FakeOddsStore(),
-        reconnectPolicy: ReconnectPolicy = .test
+        store: OddsStoreProtocol = FakeOddsStore()
     ) -> LiveOddsProvider {
         let webSocketService = webSocketService ?? ControllableOddsWebSocketService()
         return LiveOddsProvider(
@@ -316,15 +294,11 @@ private extension LiveOddsProviderTests {
                 makeRecord(matchID: 1001)
             ]),
             oddsWebSocketService: webSocketService,
-            oddsStore: store,
-            reconnectPolicy: reconnectPolicy
+            oddsStore: store
         )
     }
 
-    func makeProviderWithLoadedRecords(
-        matchIDs: [Int],
-        reconnectPolicy: ReconnectPolicy = .test
-    ) -> LoadedProvider {
+    func makeProviderWithLoadedRecords(matchIDs: [Int]) -> LoadedProvider {
         let store = FakeOddsStore()
         let webSocketService = ControllableOddsWebSocketService()
         let provider = makeProvider(
@@ -332,8 +306,7 @@ private extension LiveOddsProviderTests {
                 records: matchIDs.map { makeRecord(matchID: $0, oddsState: .available(teamAOdds: 1.50, teamBOdds: 2.50)) }
             ),
             webSocketService: webSocketService,
-            store: store,
-            reconnectPolicy: reconnectPolicy
+            store: store
         )
         return LoadedProvider(provider: provider, webSocketService: webSocketService, store: store)
     }
@@ -517,7 +490,7 @@ private final class ControllableOddsWebSocketService: OddsWebSocketServiceProtoc
         switch event {
         case .disconnected, .failed:
             continuation?.finish()
-        case .connected, .oddsUpdated:
+        case .connected, .reconnecting, .oddsUpdated:
             break
         }
     }
@@ -533,7 +506,7 @@ private final class FakeOddsStore: OddsStoreProtocol {
     private(set) var lastReplacedRecords: [MatchRecord] = []
     private(set) var snapshotCallCount = 0
     private(set) var applyOddsUpdatesCallCount = 0
-    private(set) var lastAppliedUpdates: [OddsUpdateDTO] = []
+    private(set) var lastAppliedUpdates: [OddsUpdate] = []
 
     func replaceRecords(_ records: [MatchRecord]) async {
         replaceRecordsCallCount += 1
@@ -552,7 +525,7 @@ private final class FakeOddsStore: OddsStoreProtocol {
         return records
     }
 
-    func applyOddsUpdates(_ updates: [OddsUpdateDTO]) async -> UpdateResult {
+    func applyOddsUpdates(_ updates: [OddsUpdate]) async -> UpdateResult {
         applyOddsUpdatesCallCount += 1
         lastAppliedUpdates = updates
 

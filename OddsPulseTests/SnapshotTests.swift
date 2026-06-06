@@ -71,8 +71,8 @@ final class SnapshotTests: XCTestCase {
         ])
 
         let applyResult = snapshot.applyOddsUpdates([
-            OddsUpdateDTO(matchID: 1002, teamAOdds: 1.88, teamBOdds: 2.05),
-            OddsUpdateDTO(matchID: 9999, teamAOdds: 4.00, teamBOdds: 5.00)
+            OddsUpdate(matchID: 1002, teamAOdds: 1.88, teamBOdds: 2.05),
+            OddsUpdate(matchID: 9999, teamAOdds: 4.00, teamBOdds: 5.00)
         ])
 
         XCTAssertEqual(applyResult.changedRecords.map(\.matchID), [1002])

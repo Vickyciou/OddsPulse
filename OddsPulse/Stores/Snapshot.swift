@@ -42,7 +42,7 @@ nonisolated struct Snapshot: Equatable, Sendable {
         return removedRecord
     }
 
-    mutating func applyOddsUpdates(_ updates: [OddsUpdateDTO]) -> UpdateResult {
+    mutating func applyOddsUpdates(_ updates: [OddsUpdate]) -> UpdateResult {
         var changedRecords: [MatchRecord] = []
         var unknownMatchIDs: [Int] = []
 

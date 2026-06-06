@@ -8,6 +8,7 @@ final class MockOddsWebSocketServiceTests: XCTestCase {
         let service = MockOddsWebSocketService(webSocketClient: client)
 
         let stream = service.connect(matchIDs: [1001, 1002])
+        try await waitForConnectCallCount(1, in: client)
         client.send(.connected)
 
         let event = try await collectFirstEvent(from: stream)
@@ -24,6 +25,100 @@ final class MockOddsWebSocketServiceTests: XCTestCase {
         service.disconnect()
 
         XCTAssertEqual(client.disconnectCallCount, 1)
+    }
+
+    func testStreamEndedReconnectsUntilPolicyIsExhausted() async throws {
+        let client = ControllableOddsWebSocketClient()
+        let service = MockOddsWebSocketService(
+            webSocketClient: client,
+            reconnectPolicy: ReconnectPolicy(
+                initialDelayNanoseconds: 0,
+                maxDelayNanoseconds: 0,
+                jitterRangeNanoseconds: 0,
+                maxAttempts: 2
+            )
+        )
+        let eventCollector = OddsWebSocketEventCollector(stream: service.connect(matchIDs: [1001]))
+
+        try await waitForConnectCallCount(1, in: client)
+        client.send(.connected)
+        client.send(.disconnected(reason: .streamEnded))
+        try await waitForConnectCallCount(2, in: client)
+        client.send(.connected)
+        client.send(.disconnected(reason: .streamEnded))
+        try await waitForConnectCallCount(3, in: client)
+        client.send(.connected)
+        client.send(.disconnected(reason: .streamEnded))
+
+        let events = try await eventCollector.collectNextEvents(count: 8, in: self)
+
+        XCTAssertEqual(events, [
+            .connected,
+            .disconnected(reason: .streamEnded),
+            .reconnecting,
+            .connected,
+            .disconnected(reason: .streamEnded),
+            .reconnecting,
+            .connected,
+            .disconnected(reason: .streamEnded)
+        ])
+        XCTAssertEqual(client.connectCallCount, 3)
+
+        let finalEvent = try await eventCollector.collectNextEvents(count: 1, in: self)
+        XCTAssertEqual(finalEvent, [.failed(.connectionFailed)])
+    }
+
+    func testManualDisconnectDoesNotReconnect() async throws {
+        let client = ControllableOddsWebSocketClient()
+        let service = MockOddsWebSocketService(
+            webSocketClient: client,
+            reconnectPolicy: ReconnectPolicy(
+                initialDelayNanoseconds: 0,
+                maxDelayNanoseconds: 0,
+                jitterRangeNanoseconds: 0,
+                maxAttempts: 2
+            )
+        )
+        let eventCollector = OddsWebSocketEventCollector(stream: service.connect(matchIDs: [1001]))
+
+        try await waitForConnectCallCount(1, in: client)
+        client.send(.connected)
+        client.send(.disconnected(reason: .manual))
+        let events = try await eventCollector.collectNextEvents(count: 2, in: self)
+
+        XCTAssertEqual(events, [
+            .connected,
+            .disconnected(reason: .manual)
+        ])
+        XCTAssertEqual(client.connectCallCount, 1)
+        await eventCollector.assertNoEvent(in: self)
+    }
+
+    func testReconnectPolicyDelayIsAppliedBeforeReconnectEvent() async throws {
+        let client = ControllableOddsWebSocketClient()
+        let service = MockOddsWebSocketService(
+            webSocketClient: client,
+            reconnectPolicy: ReconnectPolicy(
+                initialDelayNanoseconds: 50_000_000,
+                maxDelayNanoseconds: 50_000_000,
+                jitterRangeNanoseconds: 0,
+                maxAttempts: 1
+            )
+        )
+        let eventCollector = OddsWebSocketEventCollector(stream: service.connect(matchIDs: [1001]))
+
+        try await waitForConnectCallCount(1, in: client)
+        client.send(.connected)
+        client.send(.disconnected(reason: .streamEnded))
+        let initialEvents = try await eventCollector.collectNextEvents(count: 2, in: self)
+
+        XCTAssertEqual(initialEvents, [
+            .connected,
+            .disconnected(reason: .streamEnded)
+        ])
+        await eventCollector.assertNoEvent(in: self, timeout: 0.01)
+        let reconnectEvent = try await eventCollector.collectNextEvents(count: 1, in: self)
+        XCTAssertEqual(reconnectEvent, [.reconnecting])
     }
 
     private func collectFirstEvent(
@@ -48,7 +143,7 @@ final class MockOddsWebSocketServiceTests: XCTestCase {
 
 @MainActor
 private final class ControllableOddsWebSocketClient: OddsWebSocketClientProtocol {
-    private var continuation: AsyncStream<OddsWebSocketEvent>.Continuation?
+    private var continuations: [AsyncStream<OddsWebSocketEvent>.Continuation] = []
 
     private(set) var connectCallCount = 0
     private(set) var disconnectCallCount = 0
@@ -62,18 +157,112 @@ private final class ControllableOddsWebSocketClient: OddsWebSocketClientProtocol
             of: OddsWebSocketEvent.self,
             bufferingPolicy: .bufferingNewest(20)
         )
-        continuation = streamPair.continuation
+        continuations.append(streamPair.continuation)
         return streamPair.stream
     }
 
     func disconnect() {
         disconnectCallCount += 1
-        continuation?.yield(.disconnected(reason: .manual))
-        continuation?.finish()
-        continuation = nil
+        continuations.last?.yield(.disconnected(reason: .manual))
+        continuations.last?.finish()
+        continuations.removeAll()
     }
 
     func send(_ event: OddsWebSocketEvent) {
-        continuation?.yield(event)
+        continuations.last?.yield(event)
+        switch event {
+        case .disconnected, .failed:
+            continuations.last?.finish()
+        case .connected, .reconnecting, .oddsUpdated:
+            break
+        }
     }
+}
+
+@MainActor
+private final class OddsWebSocketEventCollector {
+    private var pendingEvents: [OddsWebSocketEvent] = []
+    private var pendingExpectations: [EventExpectation] = []
+    private var collectionTask: Task<Void, Never>?
+
+    init(stream: AsyncStream<OddsWebSocketEvent>) {
+        collectionTask = Task { @MainActor [weak self] in
+            for await event in stream {
+                self?.record(event)
+            }
+        }
+    }
+
+    deinit {
+        collectionTask?.cancel()
+    }
+
+    func collectNextEvents(
+        count: Int,
+        in testCase: XCTestCase,
+        timeout: TimeInterval = 1
+    ) async throws -> [OddsWebSocketEvent] {
+        let expectation = testCase.expectation(
+            description: "Collect next \(count) OddsWebSocketEvent values"
+        )
+        pendingExpectations.append(EventExpectation(targetCount: count, expectation: expectation))
+        fulfillReadyExpectations()
+
+        await testCase.fulfillment(of: [expectation], timeout: timeout)
+        guard pendingEvents.count >= count else {
+            throw EventCollectionError.missingEvents
+        }
+
+        let collectedEvents = Array(pendingEvents.prefix(count))
+        pendingEvents.removeFirst(count)
+        return collectedEvents
+    }
+
+    func assertNoEvent(
+        in testCase: XCTestCase,
+        timeout: TimeInterval = 0.05
+    ) async {
+        let expectation = testCase.expectation(description: "No OddsWebSocketEvent")
+        expectation.isInverted = true
+        pendingExpectations.append(EventExpectation(targetCount: 1, expectation: expectation))
+        fulfillReadyExpectations()
+
+        await testCase.fulfillment(of: [expectation], timeout: timeout)
+    }
+
+    private func record(_ event: OddsWebSocketEvent) {
+        pendingEvents.append(event)
+        fulfillReadyExpectations()
+    }
+
+    private func fulfillReadyExpectations() {
+        let readyExpectations = pendingExpectations.filter { pendingEvents.count >= $0.targetCount }
+        pendingExpectations.removeAll { pendingEvents.count >= $0.targetCount }
+        readyExpectations.forEach { $0.expectation.fulfill() }
+    }
+}
+
+private struct EventExpectation {
+    let targetCount: Int
+    let expectation: XCTestExpectation
+}
+
+private enum EventCollectionError: Error {
+    case missingEvents
+}
+
+@MainActor
+private func waitForConnectCallCount(
+    _ expectedConnectCallCount: Int,
+    in client: ControllableOddsWebSocketClient
+) async throws {
+    for _ in 0..<10 {
+        if client.connectCallCount == expectedConnectCallCount {
+            return
+        }
+
+        await Task.yield()
+    }
+
+    throw EventCollectionError.missingEvents
 }

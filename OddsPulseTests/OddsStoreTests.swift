@@ -12,8 +12,8 @@ final class OddsStoreTests: XCTestCase {
         await store.replaceRecords(records)
 
         let applyResult = await store.applyOddsUpdates([
-            OddsUpdateDTO(matchID: 1002, teamAOdds: 1.88, teamBOdds: 2.05),
-            OddsUpdateDTO(matchID: 9999, teamAOdds: 4.00, teamBOdds: 5.00)
+            OddsUpdate(matchID: 1002, teamAOdds: 1.88, teamBOdds: 2.05),
+            OddsUpdate(matchID: 9999, teamAOdds: 4.00, teamBOdds: 5.00)
         ])
         let snapshotRecords = await store.snapshot()
 
@@ -35,8 +35,8 @@ final class OddsStoreTests: XCTestCase {
         await store.replaceRecords([makeRecord(matchID: 2001)])
 
         let applyResult = await store.applyOddsUpdates([
-            OddsUpdateDTO(matchID: 1001, teamAOdds: 1.50, teamBOdds: 2.50),
-            OddsUpdateDTO(matchID: 2001, teamAOdds: 1.75, teamBOdds: 2.25)
+            OddsUpdate(matchID: 1001, teamAOdds: 1.50, teamBOdds: 2.50),
+            OddsUpdate(matchID: 2001, teamAOdds: 1.75, teamBOdds: 2.25)
         ])
 
         XCTAssertEqual(applyResult.changedRecords.map(\.matchID), [2001])
@@ -47,7 +47,7 @@ final class OddsStoreTests: XCTestCase {
         let store = OddsStore()
         await store.replaceRecords([makeRecord(matchID: 1001)])
         _ = await store.applyOddsUpdates([
-            OddsUpdateDTO(matchID: 1001, teamAOdds: 1.75, teamBOdds: 2.25)
+            OddsUpdate(matchID: 1001, teamAOdds: 1.75, teamBOdds: 2.25)
         ])
 
         let snapshotRecords = await store.snapshot()
