@@ -46,11 +46,11 @@ xcodebuild test -project OddsPulse.xcodeproj -scheme OddsPulse -destination 'pla
 | `MatchRowViewModelMapperTests.swift` | unavailable odds 顯示 |
 | `SnapshotTests.swift` | upsert、remove、ordering、lookup、replace、apply |
 | `OddsStoreTests.swift` | known/unknown odds updates、replace all、snapshot |
-| `MockOddsWebSocketServiceTests.swift` | connect/disconnect delegation、event forwarding |
+| `MockOddsWebSocketServiceTests.swift` | connect/disconnect delegation、event forwarding、DTO-to-domain mapping、stream-ended reconnect、manual disconnect no reconnect、reconnect max attempts |
 | `MockOddsWebSocketClientTests.swift` | batch match IDs、empty IDs、connected event、disconnect finishes stream |
-| `LiveOddsProviderTests.swift` | initial load、cached snapshot、unknown update、subscriber cancellation、reconnect max attempts |
+| `LiveOddsProviderTests.swift` | initial load、cached snapshot、refresh failure、unknown update、subscriber cancellation、WebSocketService start/stop、feed status event mapping |
 | `MatchesViewModelTests.swift` | loading、loaded、failed、row update、feed status、stream cancellation |
-| `ReconnectPolicyTests.swift` | delay cap 與 retry limit |
+| `ReconnectPolicyTests.swift` | reconnect delay cap 與 retry limit |
 
 ## Verification Notes
 
@@ -59,7 +59,7 @@ xcodebuild test -project OddsPulse.xcodeproj -scheme OddsPulse -destination 'pla
 - mock WebSocket 每秒最多產生 10 筆 update，且同 batch 內不重複 `matchID`。
 - live odds update path 不應呼叫整頁 `reloadData()`。
 - `disconnect()` 後不應再產生 update。
-- ViewModel 釋放時應 cancel 長生命週期 task 並 disconnect WebSocket client。
+- ViewModel 釋放時應 cancel 長生命週期 observation task；Provider 在 subscriber 歸零時應 disconnect WebSocketService。
 - ViewModel 或 client 釋放後 timer 不應繼續 retain 相關物件。
 - 若用 log 驗證，log 應能區分 initial reload 與 row update 次數。
 - 測試聚焦 merge/sort、store update、WebSocket batch invariants 與 ViewModel row update intent；UI 順暢以人工檢查與架構說明補足。
