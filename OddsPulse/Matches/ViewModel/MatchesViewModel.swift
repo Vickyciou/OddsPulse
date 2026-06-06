@@ -69,7 +69,9 @@ final class MatchesViewModel {
         case let .feedStatusChanged(feedStatus):
             self.feedStatus = feedStatus
         case let .refreshFailed(message):
-            clearRows()
+            if rows.isEmpty {
+                clearRows()
+            }
             state = .failed(message: message)
         }
     }

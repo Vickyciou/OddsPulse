@@ -43,7 +43,12 @@ MatchesViewController.viewDidLoad()
 | `.idle` | 停止 loading，隱藏 message 與 table |
 | `.loading` | `reloadData()` 清空 table，顯示 loading |
 | `.loaded(rows)` | `reloadData()` 做初次完整載入，依 rows 是否為空顯示 table 或 empty message |
-| `.failed(message)` | `reloadData()` 清空 table，顯示錯誤 message |
+| `.failed(message)` | `reloadData()`，顯示錯誤 message；若沒有既有 records，ViewModel rows 為空 |
+
+Initial load failure 與已有資料後的 refresh failure 行為不同：
+
+- initial load failure：尚未收到任何 `.recordsLoaded` 時收到 `.refreshFailed(message:)`，ViewModel 維持 empty rows 並進入 `.failed(message:)`。
+- refresh failure after data exists：已收到 cache 或 refresh 產生的 `.recordsLoaded` 後再收到 `.refreshFailed(message:)`，ViewModel 保留既有 rows 與 row index mapping，仍進入 `.failed(message:)` 回報刷新失敗；後續已知 match 的 odds update 仍可更新正確 row。
 
 ## Row-level Update Flow
 

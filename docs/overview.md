@@ -25,7 +25,7 @@
 | Thread-safe state | `OddsStore` actor 提供 snapshot 與 partial odds update，內部資料結構由 `Snapshot` 管理 |
 | UI state | `MatchesViewModel` 將 provider events 轉成 view state 與 row update intent |
 | Table updates | 初次載入使用 full reload；live odds update 使用 visible row-level reload |
-| Reconnect | `ReconnectPolicy` 由 `LiveOddsProvider` 套用 retry limit 與 delay |
+| Reconnect | `ReconnectPolicy` 由 `MockOddsWebSocketService` 套用 retry limit 與 delay |
 | Cache | scene/session in-memory cache，由 shared provider 與 store 保存 |
 
 ## Source Layout

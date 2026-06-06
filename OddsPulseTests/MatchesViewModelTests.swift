@@ -85,11 +85,57 @@ final class MatchesViewModelTests: XCTestCase {
         )
     }
 
-    func testRefreshFailedClearsRowsAndRowIndexMapping() async {
-        await assertRowsAndRowIndexMappingCleared(
-            by: .refreshFailed(message: "Unable to load matches"),
-            expectedState: .failed(message: "Unable to load matches")
-        )
+    func testRefreshFailedWithoutLoadedRecordsKeepsRowsEmptyAndEmitsFailedState() async {
+        let provider = FakeLiveOddsProvider()
+        let viewModel = MatchesViewModel(liveOddsProvider: provider)
+        defer {
+            viewModel.stopObservingLiveOdds()
+            provider.finish()
+        }
+
+        await startObserving(viewModel, provider: provider)
+        provider.send(.refreshFailed(message: "Unable to load matches"))
+        await waitUntil {
+            viewModel.state == .failed(message: "Unable to load matches")
+        }
+
+        XCTAssertTrue(viewModel.rows.isEmpty)
+        XCTAssertEqual(viewModel.state, .failed(message: "Unable to load matches"))
+    }
+
+    func testRefreshFailedAfterRecordsLoadedPreservesRowsAndRowIndexMapping() async {
+        let provider = FakeLiveOddsProvider()
+        let viewModel = MatchesViewModel(liveOddsProvider: provider)
+        defer {
+            viewModel.stopObservingLiveOdds()
+            provider.finish()
+        }
+        var updatedRowIndexes: [Int] = []
+        viewModel.onRowIndexesUpdated = { rowIndexes in
+            updatedRowIndexes = rowIndexes
+        }
+
+        await startObserving(viewModel, provider: provider)
+        await loadRecords(in: viewModel, from: provider)
+        let rowsBeforeRefreshFailure = viewModel.rows
+
+        provider.send(.refreshFailed(message: "Unable to load matches"))
+        await waitUntil {
+            viewModel.state == .failed(message: "Unable to load matches")
+        }
+
+        XCTAssertEqual(viewModel.rows.count, rowsBeforeRefreshFailure.count)
+        XCTAssertEqual(viewModel.rows, rowsBeforeRefreshFailure)
+        XCTAssertEqual(viewModel.state, .failed(message: "Unable to load matches"))
+
+        provider.send(.oddsUpdated(changedRecords: [Self.makeKnownOddsUpdateRecord()]))
+        await waitUntil { updatedRowIndexes == [1] }
+
+        XCTAssertEqual(updatedRowIndexes, [1])
+        XCTAssertEqual(viewModel.rows[0], rowsBeforeRefreshFailure[0])
+        XCTAssertEqual(viewModel.rows[1].matchID, 1002)
+        XCTAssertEqual(viewModel.rows[1].teamA, "Hawks")
+        XCTAssertEqual(viewModel.rows[1].teamB, "Lions")
     }
 
     func testOddsUpdatedEmitsRowsUpdatedForChangedRecord() async {
