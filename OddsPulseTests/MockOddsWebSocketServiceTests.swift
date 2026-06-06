@@ -46,6 +46,49 @@ final class MockOddsWebSocketServiceTests: XCTestCase {
         ])
     }
 
+    func testSecondConnectReplacesPreviousConnection() async throws {
+        let client = ControllableOddsWebSocketClient()
+        let service = MockOddsWebSocketService(webSocketClient: client)
+        let firstCollector = OddsWebSocketEventCollector(stream: service.connect(matchIDs: [1001]))
+
+        try await waitForConnectCallCount(1, in: client)
+        client.send(.connected)
+        let firstEvents = try await firstCollector.collectNextEvents(count: 1, in: self)
+        let disconnectCallCountAfterFirstConnect = client.disconnectCallCount
+
+        let secondCollector = OddsWebSocketEventCollector(stream: service.connect(matchIDs: [2001]))
+        try await waitForConnectCallCount(2, in: client)
+        client.send(.connected)
+        let secondEvents = try await secondCollector.collectNextEvents(count: 1, in: self)
+
+        XCTAssertEqual(firstEvents, [.connected])
+        XCTAssertEqual(secondEvents, [.connected])
+        XCTAssertEqual(client.disconnectCallCount, disconnectCallCountAfterFirstConnect + 1)
+        XCTAssertEqual(client.connectedMatchIDsHistory, [[1001], [2001]])
+    }
+
+    func testFailedEventEmitsFailureAndDoesNotReconnect() async throws {
+        let client = ControllableOddsWebSocketClient()
+        let service = MockOddsWebSocketService(
+            webSocketClient: client,
+            reconnectPolicy: ReconnectPolicy(
+                initialDelayNanoseconds: 0,
+                maxDelayNanoseconds: 0,
+                jitterRangeNanoseconds: 0,
+                maxAttempts: 2
+            )
+        )
+        let eventCollector = OddsWebSocketEventCollector(stream: service.connect(matchIDs: [1001]))
+
+        try await waitForConnectCallCount(1, in: client)
+        client.send(.failed(.connectionFailed))
+        let events = try await eventCollector.collectNextEvents(count: 1, in: self)
+
+        XCTAssertEqual(events, [.failed(.connectionFailed)])
+        await eventCollector.waitUntilFinished(in: self)
+        XCTAssertEqual(client.connectCallCount, 1)
+    }
+
     func testStreamEndedReconnectsUntilPolicyIsExhausted() async throws {
         let client = ControllableOddsWebSocketClient()
         let service = MockOddsWebSocketService(
@@ -202,6 +245,8 @@ private final class ControllableOddsWebSocketClient: OddsWebSocketClientProtocol
 private final class OddsWebSocketEventCollector {
     private var pendingEvents: [OddsWebSocketServiceEvent] = []
     private var pendingExpectations: [EventExpectation] = []
+    private var finishExpectations: [XCTestExpectation] = []
+    private var isFinished = false
     private var collectionTask: Task<Void, Never>?
 
     init(stream: AsyncStream<OddsWebSocketServiceEvent>) {
@@ -209,6 +254,7 @@ private final class OddsWebSocketEventCollector {
             for await event in stream {
                 self?.record(event)
             }
+            self?.markFinished()
         }
     }
 
@@ -249,6 +295,18 @@ private final class OddsWebSocketEventCollector {
         await testCase.fulfillment(of: [expectation], timeout: timeout)
     }
 
+    func waitUntilFinished(
+        in testCase: XCTestCase,
+        timeout: TimeInterval = 1
+    ) async {
+        guard !isFinished else { return }
+
+        let expectation = testCase.expectation(description: "OddsWebSocketEvent stream finished")
+        finishExpectations.append(expectation)
+
+        await testCase.fulfillment(of: [expectation], timeout: timeout)
+    }
+
     private func record(_ event: OddsWebSocketServiceEvent) {
         pendingEvents.append(event)
         fulfillReadyExpectations()
@@ -258,6 +316,12 @@ private final class OddsWebSocketEventCollector {
         let readyExpectations = pendingExpectations.filter { pendingEvents.count >= $0.targetCount }
         pendingExpectations.removeAll { pendingEvents.count >= $0.targetCount }
         readyExpectations.forEach { $0.expectation.fulfill() }
+    }
+
+    private func markFinished() {
+        isFinished = true
+        finishExpectations.forEach { $0.fulfill() }
+        finishExpectations.removeAll()
     }
 }
 

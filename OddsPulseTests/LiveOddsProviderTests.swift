@@ -95,6 +95,38 @@ final class LiveOddsProviderTests: XCTestCase {
         XCTAssertEqual(webSocketService.connectedMatchIDsHistory, [[1001, 1002]])
     }
 
+    func testMultipleSubscribersShareSingleRefreshAndWebSocketConnection() async throws {
+        // 準備
+        let recordsRepository = SuspendedRecordsRepository(records: [
+            makeRecord(matchID: 1001),
+            makeRecord(matchID: 1002)
+        ])
+        let webSocketService = ControllableOddsWebSocketService()
+        let provider = makeProvider(
+            recordsRepository: recordsRepository,
+            webSocketService: webSocketService
+        )
+        let firstCollector = LiveOddsEventCollector(stream: provider.stream())
+        let secondCollector = LiveOddsEventCollector(stream: provider.stream())
+
+        // 執行
+        let firstInitialEvents = try await firstCollector.collectNextEvents(count: 1, in: self)
+        let secondInitialEvents = try await secondCollector.collectNextEvents(count: 1, in: self)
+        await recordsRepository.release()
+        let firstRefreshEvents = try await firstCollector.collectNextEvents(count: 2, in: self)
+        let secondRefreshEvents = try await secondCollector.collectNextEvents(count: 2, in: self)
+        let recordsFetchCount = await recordsRepository.fetchCallCount()
+
+        // 驗證
+        XCTAssertEqual(firstInitialEvents, [.loading])
+        XCTAssertEqual(secondInitialEvents, [.loading])
+        assertLoadedRecordsAndConnectingEvent(firstRefreshEvents, expectedMatchIDs: [1001, 1002])
+        assertLoadedRecordsAndConnectingEvent(secondRefreshEvents, expectedMatchIDs: [1001, 1002])
+        XCTAssertEqual(recordsFetchCount, 1)
+        XCTAssertEqual(webSocketService.connectCallCount, 1)
+        XCTAssertEqual(webSocketService.connectedMatchIDsHistory, [[1001, 1002]])
+    }
+
     func testOddsUpdateBroadcastsOnlyChangedKnownRecords() async throws {
         // 準備
         let provider = makeProviderWithLoadedRecords(matchIDs: [1001, 1002])
@@ -318,6 +350,24 @@ private extension LiveOddsProviderTests {
         )
     }
 
+    func assertLoadedRecordsAndConnectingEvent(
+        _ events: [LiveOddsEvent],
+        expectedMatchIDs: [Int],
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard events.count == 2 else {
+            return XCTFail("Expected recordsLoaded and connecting events", file: file, line: line)
+        }
+
+        guard case let .recordsLoaded(records) = events[0] else {
+            return XCTFail("Expected recordsLoaded event", file: file, line: line)
+        }
+
+        XCTAssertEqual(records.map(\.matchID), expectedMatchIDs, file: file, line: line)
+        XCTAssertEqual(events[1], .feedStatusChanged(.connecting), file: file, line: line)
+    }
+
     func waitForConnectCallCount(
         _ expectedConnectCallCount: Int,
         in webSocketService: ControllableOddsWebSocketService
@@ -451,6 +501,39 @@ private actor FakeRecordsRepository: RecordsRepositoryProtocol {
     func fetchRecords() async throws -> [MatchRecord] {
         fetchCount += 1
         return try result.get()
+    }
+
+    func fetchCallCount() -> Int {
+        fetchCount
+    }
+}
+
+private actor SuspendedRecordsRepository: RecordsRepositoryProtocol {
+    private let records: [MatchRecord]
+    private var fetchCount = 0
+    private var isReleased = false
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    init(records: [MatchRecord]) {
+        self.records = records
+    }
+
+    func fetchRecords() async throws -> [MatchRecord] {
+        fetchCount += 1
+
+        if !isReleased {
+            await withCheckedContinuation { continuation in
+                continuations.append(continuation)
+            }
+        }
+
+        return records
+    }
+
+    func release() {
+        isReleased = true
+        continuations.forEach { $0.resume() }
+        continuations.removeAll()
     }
 
     func fetchCallCount() -> Int {

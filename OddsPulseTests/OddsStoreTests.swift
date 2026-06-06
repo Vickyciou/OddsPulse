@@ -59,6 +59,43 @@ final class OddsStoreTests: XCTestCase {
         )
     }
 
+    func testConcurrentOddsUpdatesProduceConsistentSnapshot() async {
+        let store = OddsStore()
+        await store.replaceRecords([
+            makeRecord(matchID: 1001),
+            makeRecord(matchID: 1002),
+            makeRecord(matchID: 1003)
+        ])
+        let updates = [
+            OddsUpdate(matchID: 1001, teamAOdds: 1.11, teamBOdds: 2.11),
+            OddsUpdate(matchID: 1002, teamAOdds: 1.22, teamBOdds: 2.22),
+            OddsUpdate(matchID: 1003, teamAOdds: 1.33, teamBOdds: 2.33)
+        ]
+
+        await withTaskGroup(of: Void.self) { taskGroup in
+            for update in updates {
+                taskGroup.addTask {
+                    _ = await store.applyOddsUpdates([update])
+                }
+            }
+        }
+
+        let snapshotRecords = await store.snapshot()
+
+        XCTAssertEqual(
+            snapshotRecords.first { $0.matchID == 1001 }?.oddsState,
+            .available(teamAOdds: 1.11, teamBOdds: 2.11)
+        )
+        XCTAssertEqual(
+            snapshotRecords.first { $0.matchID == 1002 }?.oddsState,
+            .available(teamAOdds: 1.22, teamBOdds: 2.22)
+        )
+        XCTAssertEqual(
+            snapshotRecords.first { $0.matchID == 1003 }?.oddsState,
+            .available(teamAOdds: 1.33, teamBOdds: 2.33)
+        )
+    }
+
     private func makeRecord(matchID: Int) -> MatchRecord {
         MatchRecord(
             matchID: matchID,
